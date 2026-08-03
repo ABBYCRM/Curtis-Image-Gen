@@ -1485,326 +1485,172 @@ function escapeAttr(s){ return (s||'').replace(/"/g,'&quot;'); }
 function escapeText(s){ return (s||'').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 /* ---------------- Event wiring ---------------- */
+// All event listeners are null-safe so the new Setup tab can drop
+// legacy elements (provider, apiKey, endpoint, vidModel, imgModel)
+// without breaking the page.
+const _el = id => document.getElementById(id);
+const _add = (id, ev, fn) => { const e = _el(id); if(e) e.addEventListener(ev, fn); };
 
-$('#refFile').addEventListener('change', e => {
+// Reference photo: file upload
+_add('refFile', 'change', e => {
   const f = e.target.files[0]; if(f) { setRefFromFile(f); enableLockBtn(); }
 });
-$('#refUrl').addEventListener('change', e => {
+// Reference photo: URL paste
+_add('refUrl', 'change', e => {
   const v = e.target.value.trim(); if(!v) return;
   REF_REMOTE_URL = v;
-  document.getElementById('refImg').src = v;
-  document.getElementById('refImg').style.display = 'block';
-  document.getElementById('refEmpty').style.display = 'none';
-  log(`Reference set from URL`);
+  _el('refImg').src = v;
+  _el('refImg').style.display = 'block';
+  _el('refEmpty').style.display = 'none';
+  log('Reference set from URL');
   enableLockBtn();
 });
 
-// Drag & drop
-const refWrap = $('#refWrap');
-['dragover','dragenter'].forEach(ev=>refWrap.addEventListener(ev, e=>{e.preventDefault();refWrap.style.borderColor='#d4a24c';}));
-['dragleave','drop'].forEach(ev=>refWrap.addEventListener(ev, e=>{e.preventDefault();refWrap.style.borderColor='';}));
-refWrap.addEventListener('drop', e => {
-  const f = e.dataTransfer.files[0]; if(f) { setRefFromFile(f); enableLockBtn(); }
-});
-
-/* FACE LOCK FLOW */
-let FACE_LOCKED = false;
-function enableLockBtn(){
-  const has = !!(REF_DATA_URL || REF_REMOTE_URL || $('#refUrl')?.value?.trim());
-  const btn = document.getElementById('lockFaceBtn');
-  if(btn) btn.disabled = !has || FACE_LOCKED;
-}
-// Legacy lock/unlock buttons from the old UI may not be in the DOM anymore
-// (the new Setup tab uses a checkbox). Null-safe.
-const _lockBtnEl = document.getElementById('lockFaceBtn');
-if(_lockBtnEl){
-  _lockBtnEl.addEventListener('click', () => {
-    FACE_LOCKED = true;
-    const lb = document.getElementById('lockFaceBtn');
-    const ub = document.getElementById('unlockFaceBtn');
-    if(lb) lb.style.display = 'none';
-    if(ub) ub.style.display = '';
-    const ls = document.getElementById('lockStatus');
-    if(ls) ls.innerHTML = '<b style="color:var(--ok)">🔒 Face locked.</b> Every generated still will be auto-checked against this photo. Drift triggers a re-roll.';
-    log('Face locked — auto-integrity checks armed', 'ok');
-    renderScenes();
+// Drag & drop on the reference tile
+const _refWrap = _el('refWrap');
+if(_refWrap){
+  ['dragover','dragenter'].forEach(ev => _refWrap.addEventListener(ev, e => { e.preventDefault(); _refWrap.style.borderColor = '#d4a24c'; }));
+  ['dragleave','drop'].forEach(ev => _refWrap.addEventListener(ev, e => { e.preventDefault(); _refWrap.style.borderColor = ''; }));
+  _refWrap.addEventListener('drop', e => {
+    const f = e.dataTransfer.files[0]; if(f) { setRefFromFile(f); enableLockBtn(); }
   });
 }
-const _unlockBtnEl = document.getElementById('unlockFaceBtn');
-if(_unlockBtnEl){
-  _unlockBtnEl.addEventListener('click', () => {
-    FACE_LOCKED = false;
-    const lb = document.getElementById('lockFaceBtn');
-    const ub = document.getElementById('unlockFaceBtn');
-    if(lb) lb.style.display = '';
-    if(ub) ub.style.display = 'none';
-    const ls = document.getElementById('lockStatus');
-    if(ls) ls.innerHTML = 'Upload or paste a face photo, then click <b>Lock this face</b>.';
+
+// Face lock checkbox (new Setup tab) or legacy buttons
+_add('faceLockChk', 'change', e => {
+  FACE_LOCKED = e.target.checked;
+  if(FACE_LOCKED){
+    _el('lockStatus') && (_el('lockStatus').innerHTML = '<b style="color:var(--ok)">🔒 Face locked.</b>');
+    log('Face locked', 'ok');
+  } else {
     log('Face unlocked', 'warn');
-  });
-}
-$('#faceThreshold').addEventListener('input', e => {
-  localStorage.setItem('faceThreshold', e.target.value);
+  }
+  renderScenes();
+});
+_add('faceLockChk', 'input', e => {
+  FACE_LOCKED = e.target.checked;
 });
 
-$('#provider').addEventListener('change', e => {
-  const p = PROVIDERS[e.target.value];
-  $('#endpoint').value = p.defaultEndpoint;
-  $('#vidModel').value = p.videoModel;
-  $('#imgModel').value = p.imageModel;
-  $('#endpointLabel').textContent = `${p.label} endpoint`;
-  log(`Provider set to ${p.label}`);
+// Face threshold
+_add('faceThreshold', 'change', e => {
+  try { localStorage.setItem('faceThreshold', e.target.value); } catch{}
 });
 
-$('#parseBtn').addEventListener('click', () => {
-  const text = $('#script').value;
+// Provider dropdown (only on Settings tab in the new UI)
+_add('provider', 'change', e => {
+  const prov = PROVIDERS[e.target.value];
+  if(!prov) return;
+  // Mirror to the per-shot fields if they still exist
+  const ep = _el('endpoint'); if(ep) ep.value = prov.defaultEndpoint;
+  const vm = _el('vidModel'); if(vm) vm.value = prov.videoModel;
+  const im = _el('imgModel'); if(im) im.value = prov.imageModel;
+  const lbl = _el('endpointLabel'); if(lbl) lbl.textContent = `${prov.label} endpoint`;
+  log(`Provider set to ${prov.label}`);
+  if(typeof probeProxy === 'function') probeProxy();
+});
+
+// Script → scenes
+_add('parseBtn', 'click', () => {
+  const text = (_el('script')?.value || '');
   if(!text.trim()){ log('Script is empty', 'warn'); return; }
   state.scenes = parseScript(text);
   renderScenes(); renderGallery(); renderVideoStrip();
-  $('#genAllBtn').disabled = state.scenes.length === 0;
-  $('#genImagesBtn').disabled = state.scenes.length === 0;
-  $('#genVideosBtn').disabled = state.scenes.length === 0;
+  ['genAllBtn','genImagesBtn','genVideosBtn','makeTrailerBtn'].forEach(id => {
+    const b = _el(id); if(b) b.disabled = state.scenes.length === 0;
+  });
   log(`Parsed ${state.scenes.length} scene(s)`);
 });
 
-$('#addSceneBtn').addEventListener('click', () => {
+_add('addSceneBtn', 'click', () => {
   state.scenes.push({
     id: crypto.randomUUID(),
-    n: state.scenes.length+1,
-    title: `Scene ${state.scenes.length+1}`,
+    n: state.scenes.length + 1,
+    title: `Scene ${state.scenes.length + 1}`,
     description: '',
-    imageStatus: "idle", videoStatus: "idle",
+    imageStatus: 'idle', videoStatus: 'idle',
     imageUrl: null, videoUrl: null,
   });
   renderScenes();
-  $('#genAllBtn').disabled = false;
-  $('#genImagesBtn').disabled = false;
-  $('#genVideosBtn').disabled = false;
+  ['genAllBtn','genImagesBtn','genVideosBtn','makeTrailerBtn'].forEach(id => {
+    const b = _el(id); if(b) b.disabled = false;
+  });
 });
 
-// Test connection button — only present in Settings (legacy Setup), so
-// null-safe. Kept here because some users may have it cached in their
-// localStorage scene data.
-const _testBtnEl = document.getElementById('testBtn');
-if(_testBtnEl){
-  _testBtnEl.addEventListener('click', async () => {
-    try{
-      const ref = await uploadReferenceIfNeeded();
-      const p = currentProvider();
-      log(`Testing ${p.label}…`);
-      const sub = await p.submitImage({
-        prompt: "test portrait",
-        refUrl: ref,
-        aspect: $('#aspect')?.value || '16:9',
-        quality: $('#quality')?.value || '2K',
-        model: $('#imgModel')?.value?.trim() || p.imageModel,
-      });
-      log(`Test job submitted: ${sub.jobId || '(no id)'}`);
-      const res = await pollUntilDone(p.pollImage, sub, "Test");
-      log(`<ok>Connection OK</ok>`, "ok");
-      setConn('connected', `Test call to ${p.label} succeeded`);
-    } catch(e){
-      const friendly = e.friendly || (e.message || '').slice(0, 200);
-      if(friendly.includes('HTTP ') || friendly.includes('fetch') || friendly.includes('reach')){
-        setConn('unreachable', friendly);
-      } else {
-        setConn('auth', friendly);
-      }
-      log(`<err>${friendly}</err>`, "err");
-    }
-  });
-}
-
-const _clearKeyBtnEl = document.getElementById('clearKeyBtn');
-if(_clearKeyBtnEl){
-  _clearKeyBtnEl.addEventListener('click', () => {
-    const k = document.getElementById('apiKey'); if(k) k.value = '';
-    log('API key cleared');
-  });
-}
-
-// Backwards-compat: the old "Generate all" / "Stills only" / "Videos only"
-// buttons used to live on the Stage tab. They may still exist on cached
-// pages; wire them to the same handler the new Make-trailer button uses.
-const _genAllBtnEl = document.getElementById('genAllBtn');
-if(_genAllBtnEl) _genAllBtnEl.addEventListener('click', () => generateAll(true, true));
-const _genImagesBtnEl = document.getElementById('genImagesBtn');
-if(_genImagesBtnEl) _genImagesBtnEl.addEventListener('click', () => generateAll(true, false));
-const _genVideosBtnEl = document.getElementById('genVideosBtn');
-if(_genVideosBtnEl) _genVideosBtnEl.addEventListener('click', () => generateAll(false, true));
-const _stopBtnEl = document.getElementById('stopBtn');
-if(_stopBtnEl) _stopBtnEl.addEventListener('click', () => { state.stop = true; log('Stop requested', 'warn'); });
-
-// The big "Make my trailer" button on the new Setup tab. Does the whole
-// pipeline: stills → videos → trailer. Reports progress into the banner
-// and the per-tab log.
-const _makeTrailerBtnEl = document.getElementById('makeTrailerBtn');
-if(_makeTrailerBtnEl) _makeTrailerBtnEl.addEventListener('click', () => makeTrailer());
-
-async function makeTrailer(){
-  // 1. Sanity checks with friendly messages
-  if(!state.scenes.length){
-    const txt = ($('#script')?.value || '').trim();
-    if(!txt){
-      setBanner('bad', 'Add a script first. Type a line or two and click Parse into scenes.');
-      return;
-    }
-    state.scenes = parseScript(txt);
-    renderScenes(); renderGallery(); renderVideoStrip();
-    if(!state.scenes.length){
-      setBanner('bad', "Couldn't find any scenes. Separate scenes with --- on its own line.");
-      return;
-    }
-  }
-  try {
+// Test connection (Settings tab) — keep for power users
+_add('testBtn', 'click', async () => {
+  try{
     await uploadReferenceIfNeeded();
+    const p = currentProvider();
+    log(`Testing ${p.label}…`);
+    const sub = await p.submitImage({
+      prompt: 'test portrait',
+      refUrl: REF_DATA_URL || REF_REMOTE_URL || ($('#refUrl')?.value?.trim()),
+      aspect: $('#aspect')?.value || '16:9',
+      quality: $('#quality')?.value || '2K',
+      model: $('#imgModel')?.value?.trim() || p.imageModel,
+    });
+    const res = await pollUntilDone(p.pollImage, sub, 'Test');
+    log('<ok>Connection OK</ok>', 'ok');
+    setConn('connected', `Test call to ${p.label} succeeded`);
   } catch(e){
-    setBanner('bad', e.message || 'Add a face photo before making the trailer.');
-    return;
+    const friendly = e.friendly || (e.message || '').slice(0, 200);
+    setConn(/HTTP|fetch|reach/.test(friendly) ? 'unreachable' : 'auth', friendly);
+    log(`<err>${friendly}</err>`, 'err');
   }
-  if(!$('#faceLockChk')?.checked && !FACE_LOCKED){
-    setBanner('warn', 'Face lock is off. The generated stills might not look like the reference. Enable it in step 1 for consistent results.');
-  }
-  const ref = REF_DATA_URL || REF_REMOTE_URL || $('#refUrl')?.value?.trim();
-  if(!ref){
-    setBanner('bad', 'Add a face photo first.');
-    return;
-  }
+});
 
-  // 2. Detect best provider
-  const provider = pickBestProvider();
-  if(!provider){
-    setBanner('bad', 'No provider is configured. Open Settings (⚙), paste an API key, and try again.');
-    return;
-  }
-  // Sync the dropdown so the rest of the code uses the right provider
-  $('#provider').value = provider.key;
-  $('#provider').dispatchEvent(new Event('change'));
+_add('clearKeyBtn', 'click', () => {
+  const k = _el('apiKey'); if(k) k.value = '';
+  log('API key cleared');
+});
 
-  setBanner('ok', `Using <b>${provider.label}</b>. ${state.scenes.length} scene(s) queued. Hold on — this takes a few minutes.`);
-  $('#makeTrailerBtn').disabled = true;
-  progressEl.textContent = '';
+// Make my trailer (the new big primary button)
+_add('makeTrailerBtn', 'click', () => {
+  if(typeof makeTrailer === 'function') makeTrailer();
+});
 
-  try {
-    // Stage 1: stills
-    setMakeProgress(`1/3 — generating ${state.scenes.length} still(s)…`);
-    await generateAll(true, false, ref);
+// Partial-pipeline buttons
+_add('genAllBtn', 'click', () => generateAll(true, true));
+_add('genImagesBtn', 'click', () => generateAll(true, false));
+_add('genVideosBtn', 'click', () => generateAll(false, true));
+_add('stopBtn', 'click', () => { state.stop = true; log('Stop requested', 'warn'); });
 
-    // Check for config errors before going further
-    const cfgErr = state.scenes.find(s => s.imageStatus === 'failed' && s._configError);
-    if(cfgErr){
-      setBanner('bad', `Stopped: ${cfgErr._configError}`);
-      $('#makeTrailerBtn').disabled = false;
-      return;
-    }
-
-    // Stage 2: videos
-    setMakeProgress('2/3 — animating each still into a clip…');
-    await generateAll(false, true, ref);
-
-    const videoErr = state.scenes.find(s => s.videoStatus === 'failed' && s._configError);
-    if(videoErr){
-      setBanner('bad', `Stopped: ${videoErr._configError}`);
-      $('#makeTrailerBtn').disabled = false;
-      return;
-    }
-
-    // Stage 3: trailer
-    setMakeProgress('3/3 — joining all clips into one trailer (this is the slow one)…');
-    showTab('trailer');
-    // Wait a tick so the trailer tab renders before we kick off the heavy work
-    await new Promise(r => setTimeout(r, 200));
-    await buildTrailer();
-
-    setBanner('ok', `🎬 Done. Your trailer is on the <b>Trailer</b> tab. Hit Download to save it.`);
-  } catch(e){
-    const friendly = e.friendly || e.message || 'Something went wrong.';
-    setBanner('bad', friendly);
-  } finally {
-    $('#makeTrailerBtn').disabled = false;
-  }
-}
-
-function setMakeProgress(text){
-  const el = document.getElementById('makeProgress');
-  if(el) el.textContent = text;
-  progressEl.textContent = text;
-  log(text);
-}
-
-function setBanner(level, text){
-  const el = document.getElementById('setupBanner');
-  if(!el) return;
-  el.className = 'setup-banner setup-banner-' + level;
-  document.getElementById('bannerText').innerHTML = text;
-}
-
-// Pick the first provider whose key is configured. Order: A2E (primary,
-// since it does both stills and videos and is what we know works), then
-// OpenAI, then Gemini. The user can override in Settings.
-async function pickBestProvider(){
-  try {
-    const endpoint = (PROVIDERS.a2e._endpoint() || '').replace(/\/a2e$/, '');
-    const r = await fetch(endpoint + '/', { method: 'GET', mode: 'cors' });
-    if(!r.ok) return null;
-    const j = await r.json();
-    if(!j.providers) return null;
-    const order = ['a2e', 'openai', 'gemini'];
-    for(const k of order){
-      if(j.providers[k]?.ready === true){
-        return { key: k, label: j.providers[k].label || k };
-      }
-    }
-    return null;
-  } catch(_){
-    return null;
-  }
-}
-
-function currentProvider(){ return PROVIDERS[$('#provider').value]; }
-function setConn(state, detail){
-  // state: 'connected' | 'auth' | 'unreachable' | 'checking'
-  const el = $('#connState');
-  const map = {
-    connected:   { text: 'Connected',          cls: 'ok' },
-    auth:        { text: 'Auth error',         cls: 'bad' },
-    unreachable: { text: 'Not connected',      cls: 'bad' },
-    checking:    { text: 'Checking…',          cls: '' },
+// Export / import
+_add('exportBtn', 'click', () => {
+  const dump = {
+    version: 1,
+    provider: $('#provider')?.value || 'a2e',
+    aspect: $('#aspect')?.value,
+    quality: $('#quality')?.value,
+    stylePrompt: $('#stylePrompt')?.value,
+    reference: { remoteUrl: REF_REMOTE_URL, dataUrl: REF_DATA_URL },
+    scenes: state.scenes,
   };
-  const m = map[state] || map.checking;
-  el.textContent = m.text;
-  el.className = 'pill ' + m.cls;
-  el.title = detail || '';
-}
+  const blob = new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `trailer-project-${Date.now()}.json`;
+  a.click();
+});
 
-/* Passive proxy health check — runs on page load. Hits the proxy / 
-   endpoint (no auth required) and reports the result. Distinguishes
-   "proxy reachable" from "proxy reachable but provider says auth bad". */
-async function probeProxy(){
-  setConn('checking');
-  // Use whichever provider the user has selected. All three providers
-  // share the same proxy URL, so we strip the trailing /a2e if present
-  // and hit the root to get a per-provider readiness report.
-  const p = $('#provider')?.value || 'a2e';
-  const prov = PROVIDERS[p];
-  if(!prov){ setConn('unreachable', `Unknown provider: ${p}`); return; }
-  const endpoint = (prov._endpoint() || '').replace(/\/a2e$/, '');
-  try {
-    const r = await fetch(endpoint + '/', { method: 'GET', mode: 'cors' });
-    if(!r.ok) throw new Error('HTTP ' + r.status);
-    const j = await r.json();
-    if(j && j.providers){
-      const ready = j.providers[p]?.ready;
-      if(ready === true){ setConn('connected', `Proxy reachable, ${p} key configured`); return; }
-      if(ready === false){ setConn('auth', `Proxy reachable, but ${p} key is not set on the proxy. Add it in Render env vars or paste it in the in-app key field.`); return; }
-      setConn('connected', `Proxy reachable. ${p}: ${ready}`);
-    } else {
-      setConn('connected', 'Proxy reachable');
-    }
-  } catch(e){
-    setConn('unreachable', `Cannot reach proxy: ${e.message}`);
-  }
-}
+_add('importBtn', 'click', () => _el('importFile')?.click());
+_add('importFile', 'change', async e => {
+  const f = e.target.files[0]; if(!f) return;
+  const txt = await f.text();
+  const j = JSON.parse(txt);
+  if(j.reference?.remoteUrl){ REF_REMOTE_URL = j.reference.remoteUrl; const r = _el('refUrl'); if(r) r.value = REF_REMOTE_URL; }
+  else if(j.reference?.dataUrl){ REF_DATA_URL = j.reference.dataUrl; const r = _el('refImg'); if(r) r.src = REF_DATA_URL; }
+  if(j.provider) { const p = _el('provider'); if(p) p.value = j.provider; }
+  if(j.aspect) { const a = _el('aspect'); if(a) a.value = j.aspect; }
+  if(j.quality){ const q = _el('quality'); if(q) q.value = j.quality; }
+  if(j.stylePrompt){ const s = _el('stylePrompt'); if(s) s.value = j.stylePrompt; }
+  if(Array.isArray(j.scenes)) state.scenes = j.scenes;
+  renderScenes(); renderGallery(); renderVideoStrip();
+  ['genAllBtn','genImagesBtn','genVideosBtn','makeTrailerBtn'].forEach(id => {
+    const b = _el(id); if(b) b.disabled = state.scenes.length === 0;
+  });
+  log('Project imported');
+});
 
 /* Delegated scene events */
 scenesEl.addEventListener('click', async e => {
@@ -1999,14 +1845,13 @@ function buildScriptForScene(s){
 }
 
 /* ---------------- Export / Import ---------------- */
-
-$('#exportBtn').addEventListener('click', () => {
+function exportProject(){
   const dump = {
     version: 1,
-    provider: $('#provider').value,
-    aspect: $('#aspect').value,
-    quality: $('#quality').value,
-    stylePrompt: $('#stylePrompt').value,
+    provider: _el('provider')?.value || 'a2e',
+    aspect: _el('aspect')?.value,
+    quality: _el('quality')?.value,
+    stylePrompt: _el('stylePrompt')?.value,
     reference: { remoteUrl: REF_REMOTE_URL, dataUrl: REF_DATA_URL },
     scenes: state.scenes,
   };
@@ -2015,26 +1860,30 @@ $('#exportBtn').addEventListener('click', () => {
   a.href = URL.createObjectURL(blob);
   a.download = `trailer-project-${Date.now()}.json`;
   a.click();
-});
-
-$('#importBtn').addEventListener('click', () => $('#importFile').click());
-$('#importFile').addEventListener('change', async e => {
-  const f = e.target.files[0]; if(!f) return;
-  const txt = await f.text();
+}
+async function importProject(file){
+  const txt = await file.text();
   const j = JSON.parse(txt);
-  if(j.reference?.remoteUrl){ REF_REMOTE_URL = j.reference.remoteUrl; $('#refUrl').value = REF_REMOTE_URL; $('#refImg').src = REF_REMOTE_URL; $('#refImg').style.display='block'; $('#refEmpty').style.display='none'; }
-  else if(j.reference?.dataUrl){ REF_DATA_URL = j.reference.dataUrl; $('#refImg').src = REF_DATA_URL; $('#refImg').style.display='block'; $('#refEmpty').style.display='none'; }
-  if(j.provider) $('#provider').value = j.provider;
-  if(j.aspect)  $('#aspect').value  = j.aspect;
-  if(j.quality) $('#quality').value = j.quality;
-  if(j.stylePrompt) $('#stylePrompt').value = j.stylePrompt;
+  if(j.reference?.remoteUrl){
+    REF_REMOTE_URL = j.reference.remoteUrl;
+    const r = _el('refUrl'); if(r) r.value = REF_REMOTE_URL;
+  } else if(j.reference?.dataUrl){
+    REF_DATA_URL = j.reference.dataUrl;
+  }
+  if(j.provider){ const p = _el('provider'); if(p) p.value = j.provider; }
+  if(j.aspect){  const a = _el('aspect');  if(a) a.value = j.aspect; }
+  if(j.quality){ const q = _el('quality'); if(q) q.value = j.quality; }
+  if(j.stylePrompt){ const s = _el('stylePrompt'); if(s) s.value = j.stylePrompt; }
   if(Array.isArray(j.scenes)) state.scenes = j.scenes;
   renderScenes(); renderGallery(); renderVideoStrip();
-  $('#genAllBtn').disabled = state.scenes.length===0;
-  $('#genImagesBtn').disabled = state.scenes.length===0;
-  $('#genVideosBtn').disabled = state.scenes.length===0;
+  ['genAllBtn','genImagesBtn','genVideosBtn','makeTrailerBtn'].forEach(id => {
+    const b = _el(id); if(b) b.disabled = state.scenes.length === 0;
+  });
   log('Project imported');
-});
+}
+_add('exportBtn', 'click', exportProject);
+_add('importBtn', 'click', () => _el('importFile')?.click());
+_add('importFile', 'change', e => { const f = e.target.files[0]; if(f) importProject(f); });
 
 /* ---------------- Tab navigation (mobile) ---------------- */
 function showTab(name){
@@ -2677,7 +2526,7 @@ loadSettings();
 $('#provider').dispatchEvent(new Event('change'));
 // Re-probe whenever the user switches provider, so the pill reflects
 // the new provider's readiness.
-$('#provider').addEventListener('change', () => probeProxy());
+{ const el = document.getElementById('provider'); if(el) el.addEventListener('change', () => probeProxy()); }
 // Run the initial probe so the pill tells the truth on page load.
 probeProxy();
 
