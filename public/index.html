@@ -2517,6 +2517,65 @@ if(_scenesEl){
   });
 }
 
+/* ---------------- Restored core helpers ---------------- */
+// Only functions that the workflow-rethink pass accidentally dropped.
+// The big ones (loadSettings / saveSettings / authHeaders / etc.) already
+// exist further down — we don't redeclare them.
+
+let FACE_LOCKED = false;
+const STORAGE_KEY = 'curtisStateV1';
+
+function pickBestProvider(){
+  // Auto-pick: A2E if a key is set, else OpenAI, else Gemini, else fallback to a2e
+  const get = id => document.getElementById(id)?.value?.trim();
+  if(get('openaiKeyA2E')) return 'a2e';
+  if(get('openaiKey'))    return 'openai';
+  if(get('geminiKey'))    return 'gemini';
+  return 'a2e';
+}
+function currentProvider(){
+  const id = pickBestProvider();
+  return (window.PROVIDERS && PROVIDERS[id]) || PROVIDERS.a2e;
+}
+function refreshProviderDropdown(){
+  const sel = document.getElementById('provider');
+  if(!sel) return;
+  sel.value = pickBestProvider();
+}
+function setConn(state, msg){
+  const pill = document.getElementById('connPill')
+            || document.getElementById('connPillA2E')
+            || document.getElementById('statusPill');
+  if(!pill) return;
+  pill.className = 'conn-pill conn-' + state;
+  pill.title = msg || '';
+  const label = { connected: 'connected', auth: 'auth needed',
+                  unreachable: 'unreachable', checking: 'checking…' }[state] || state;
+  pill.textContent = label;
+}
+async function getProxyBase(){
+  return localStorage.getItem('curtisProxyBase')
+      || 'https://curtis-a2e-proxy.onrender.com';
+}
+async function probeProxy(){
+  setConn('checking', 'Probing proxy…');
+  try {
+    const r = await fetch((await getProxyBase()) + '/healthz', { cache: 'no-store' });
+    if(!r.ok){ setConn('unreachable', 'Proxy returned ' + r.status); return; }
+    const j = await r.json();
+    if(j.ok === false && j.code === 'unconfigured'){ setConn('auth', 'Proxy has no provider key set'); return; }
+    setConn('connected', 'Proxy live: ' + (j.provider || 'unknown'));
+  } catch(e){
+    setConn('unreachable', 'Proxy unreachable: ' + ((e.message || '').slice(0, 120)));
+  }
+}
+function setBanner(kind, html){
+  const el = document.getElementById('setupBanner');
+  if(!el) return;
+  el.className = 'setup-banner setup-banner-' + kind;
+  el.innerHTML = html;
+}
+
 /* ---------------- Init ---------------- */
 // Restore from localStorage FIRST so its values (endpoint, model, etc.)
 // don't get clobbered by the provider change handler that fills defaults.
