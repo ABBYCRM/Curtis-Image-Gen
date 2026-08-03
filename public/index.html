@@ -1638,7 +1638,7 @@ async function makeTrailer(){
     state.scenes = parseScript(txt);
     renderScenes(); renderGallery(); renderVideoStrip();
     if(!state.scenes.length){
-      setBanner('bad', 'Couldn\\'t find any scenes. Separate scenes with --- on its own line.');
+      setBanner('bad', "Couldn't find any scenes. Separate scenes with --- on its own line.");
       return;
     }
   }
@@ -2656,7 +2656,7 @@ function refreshSetupBanner(){
   } else if(!hasScenes){
     setBanner('info', 'Script looks good. Click <b>Parse into scenes</b> to break it into shots.');
   } else {
-    setBanner('ok', `Ready. <b>${state.scenes.length}</b> scene(s) loaded. Hit <b>Make my trailer</b> when you\\'re set.`);
+    setBanner('ok', `Ready. <b>${state.scenes.length}</b> scene(s) loaded. Hit <b>Make my trailer</b> when you're set.`);
   }
 }
 ['#refUrl', '#script', '#faceLockChk'].forEach(s => {
