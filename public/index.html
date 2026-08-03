@@ -1521,10 +1521,19 @@ $('#testBtn').addEventListener('click', async () => {
     log(`Test job submitted: ${sub.jobId || '(no id)'}`);
     const res = await pollUntilDone(p.pollImage, sub, "Test");
     log(`<ok>Connection OK</ok>`, "ok");
-    setConn(true);
+    setConn('connected', `Test call to ${p.label} succeeded`);
   } catch(e){
-    log(`<err>Connection failed: ${e.message}</err>`, "err");
-    setConn(false);
+    // A2E returns structured errors as {code, msg} wrapped in HTTP 200
+    // (we normalized this in the proxy). Check the last log line for the
+    // provider's human-readable message.
+    const msg = (e.message || '').slice(0, 200);
+    if(msg.includes('HTTP ') || msg.includes('fetch')){
+      setConn('unreachable', msg);
+    } else {
+      // Provider reachable but rejected — likely auth/plan issue
+      setConn('auth', msg);
+    }
+    log(`<err>Connection failed: ${msg}</err>`, "err");
   }
 });
 
@@ -1539,10 +1548,48 @@ $('#genVideosBtn').addEventListener('click', () => generateAll(false, true));
 $('#stopBtn').addEventListener('click', () => { state.stop = true; log('Stop requested', 'warn'); });
 
 function currentProvider(){ return PROVIDERS[$('#provider').value]; }
-function setConn(ok){
+function setConn(state, detail){
+  // state: 'connected' | 'auth' | 'unreachable' | 'checking'
   const el = $('#connState');
-  el.textContent = ok ? 'Connected' : 'Not connected';
-  el.className = 'pill ' + (ok ? 'ok' : 'bad');
+  const map = {
+    connected:   { text: 'Connected',          cls: 'ok' },
+    auth:        { text: 'Auth error',         cls: 'bad' },
+    unreachable: { text: 'Not connected',      cls: 'bad' },
+    checking:    { text: 'Checking…',          cls: '' },
+  };
+  const m = map[state] || map.checking;
+  el.textContent = m.text;
+  el.className = 'pill ' + m.cls;
+  el.title = detail || '';
+}
+
+/* Passive proxy health check — runs on page load. Hits the proxy / 
+   endpoint (no auth required) and reports the result. Distinguishes
+   "proxy reachable" from "proxy reachable but provider says auth bad". */
+async function probeProxy(){
+  setConn('checking');
+  // Use whichever provider the user has selected. All three providers
+  // share the same proxy URL, so we strip the trailing /a2e if present
+  // and hit the root to get a per-provider readiness report.
+  const p = $('#provider')?.value || 'a2e';
+  const prov = PROVIDERS[p];
+  if(!prov){ setConn('unreachable', `Unknown provider: ${p}`); return; }
+  const endpoint = (prov._endpoint() || '').replace(/\/a2e$/, '');
+  try {
+    const r = await fetch(endpoint + '/', { method: 'GET', mode: 'cors' });
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    if(j && j.providers){
+      const ready = j.providers[p]?.ready;
+      if(ready === true){ setConn('connected', `Proxy reachable, ${p} key configured`); return; }
+      if(ready === false){ setConn('auth', `Proxy reachable, but ${p} key is not set on the proxy. Add it in Render env vars or paste it in the in-app key field.`); return; }
+      setConn('connected', `Proxy reachable. ${p}: ${ready}`);
+    } else {
+      setConn('connected', 'Proxy reachable');
+    }
+  } catch(e){
+    setConn('unreachable', `Cannot reach proxy: ${e.message}`);
+  }
 }
 
 /* Delegated scene events */
@@ -1591,7 +1638,6 @@ videoStripEl.addEventListener('click', e => {
 async function generateAll(doImg, doVid){
   if(state.stop) return;
   const ref = await uploadReferenceIfNeeded();
-  setConn(true);
   state.stop = false;
   $('#stopBtn').disabled = false;
   const total = state.scenes.length;
@@ -2359,6 +2405,11 @@ const restored = loadState();
 refreshProviderDropdown();
 loadSettings();
 $('#provider').dispatchEvent(new Event('change'));
+// Re-probe whenever the user switches provider, so the pill reflects
+// the new provider's readiness.
+$('#provider').addEventListener('change', () => probeProxy());
+// Run the initial probe so the pill tells the truth on page load.
+probeProxy();
 
 // Settings tab wiring
 const _saveBtn = document.getElementById('saveSettingsBtn');
