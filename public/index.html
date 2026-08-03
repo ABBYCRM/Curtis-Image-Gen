@@ -510,6 +510,51 @@ Wide shot, library at night. He walks between shelves.
     </div>
   </section>
 
+  <!-- TAB 4: Trailer (final cut) -->
+  <section class="panel" data-tab="trailer" aria-label="Trailer">
+    <div>
+      <h2>Trailer — Final Cut</h2>
+      <div class="hint">Concatenates all generated scene clips into one MP4 with a black title card before each scene. Runs entirely in your browser via FFmpeg.wasm — no upload, no server.</div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>Trailer title (first card)</label>
+        <input type="text" id="trailerTitle" placeholder="CURTIS" value="CURTIS" />
+      </div>
+      <div>
+        <label>Title-card duration (sec)</label>
+        <input type="number" id="titleDur" value="1.6" min="0" max="5" step="0.1" />
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>Outro card text</label>
+        <input type="text" id="outroText" placeholder="COMING SOON" value="COMING SOON" />
+      </div>
+      <div>
+        <label>Outro duration (sec)</label>
+        <input type="number" id="outroDur" value="2.2" min="0" max="5" step="0.1" />
+      </div>
+    </div>
+
+    <label style="margin-top:4px"><input type="checkbox" id="addTitleCards" checked> Add black title card before each scene</label>
+
+    <div class="row" style="margin-top:4px">
+      <button class="btn primary" id="buildTrailerBtn">🎬 Build trailer MP4</button>
+      <button class="btn ghost" id="downloadTrailerBtn" disabled>↓ Download</button>
+    </div>
+
+    <div class="progress" id="trailerProgress">Idle. Generate at least 2 scene clips first.</div>
+
+    <div class="preview" id="trailerPreview" style="background:#000">
+      <div class="placeholder">Trailer preview will appear here after build.</div>
+    </div>
+
+    <div class="log" id="trailerLog" aria-live="polite"></div>
+  </section>
+
   </div><!-- /.panels -->
 
   <nav class="tabbar" aria-label="Sections">
@@ -521,6 +566,9 @@ Wide shot, library at night. He walks between shelves.
     </button>
     <button data-goto="scenes" aria-label="Scenes">
       <span class="ic">🎞</span><span>Scenes</span>
+    </button>
+    <button data-goto="trailer" aria-label="Trailer">
+      <span class="ic">🎞️</span><span>Trailer</span>
     </button>
   </nav>
 </main>
@@ -1378,9 +1426,341 @@ document.addEventListener('touchmove', e => {
   // allow default outside of scrollable regions
 }, { passive: true });
 
+/* =========================================================================
+   FEATURE 1: Trailer builder (FFmpeg.wasm in-browser concat)
+   ========================================================================= */
+let _ffmpeg = null, _ffmpegLoading = null;
+const TLOG = (msg, cls='') => {
+  const t = new Date().toLocaleTimeString();
+  const el = document.getElementById('trailerLog');
+  const span = document.createElement('div');
+  span.innerHTML = `<span style="color:#5a6478">[${t}]</span> ${cls==='err'?'<span class="err">'+msg+'</span>':cls==='ok'?'<span class="ok">'+msg+'</span>':cls==='warn'?'<span class="warn">'+msg+'</span>':msg}`;
+  el.appendChild(span); el.scrollTop = el.scrollHeight;
+};
+
+async function loadFFmpeg(){
+  if(_ffmpeg) return _ffmpeg;
+  if(_ffmpegLoading) return _ffmpegLoading;
+  _ffmpegLoading = (async () => {
+    TLOG('Loading FFmpeg.wasm (first time may take a few MB)…');
+    const { FFmpeg } = await import('https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/+esm');
+    const { fetchFile, toBlobURL } = await import('https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/+esm');
+    const ff = new FFmpeg();
+    ff.on('log', ({ message }) => { /* TLOG(message); */ });
+    ff.on('progress', ({ progress }) => {
+      const pct = Math.round(progress * 100);
+      document.getElementById('trailerProgress').textContent = `Encoding trailer… ${pct}%`;
+    });
+    const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
+    await ff.load({
+      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+    });
+    _ffmpeg = { ff, fetchFile };
+    TLOG('FFmpeg ready', 'ok');
+    return _ffmpeg;
+  })();
+  return _ffmpegLoading;
+}
+
+/* Draw a black title card with text into a canvas, return a Blob (PNG) */
+async function makeTitleCardBlob(text, width, height, opts={}){
+  const canvas = document.createElement('canvas');
+  canvas.width = width; canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  // background
+  ctx.fillStyle = opts.bg || '#000000';
+  ctx.fillRect(0, 0, width, height);
+  // subtle vignette
+  const g = ctx.createRadialGradient(width/2, height/2, Math.min(width,height)*0.2, width/2, height/2, Math.max(width,height)*0.7);
+  g.addColorStop(0, 'rgba(212,162,76,0.08)');
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.fillRect(0,0,width,height);
+  // title text
+  const fontSize = Math.round(height * 0.12);
+  ctx.fillStyle = opts.fg || '#d4a24c';
+  ctx.font = `700 ${fontSize}px -apple-system, "Segoe UI", Inter, Roboto, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.shadowColor = 'rgba(212,162,76,0.4)';
+  ctx.shadowBlur = 30;
+  ctx.fillText(text, width/2, height/2);
+  // bottom hairline
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#262b3a';
+  ctx.fillRect(width*0.35, height*0.78, width*0.3, 2);
+  // small sub
+  ctx.fillStyle = '#8a93a8';
+  ctx.font = `500 ${Math.round(fontSize*0.28)}px -apple-system, "Segoe UI", Inter, sans-serif`;
+  ctx.fillText('CURTIS · A TRAILER', width/2, height*0.85);
+  return new Promise(res => canvas.toBlob(res, 'image/png'));
+}
+
+function aspectDims(ratio){
+  // target 720p height; width derived
+  const H = 720;
+  const [a,b] = ratio.split(':').map(Number);
+  return { w: Math.round(H * a / b), h: H };
+}
+
+async function buildTrailer(){
+  const clips = state.scenes.filter(s => s.videoUrl);
+  if(clips.length < 2){
+    TLOG('Need at least 2 generated scene clips to build a trailer.', 'warn');
+    document.getElementById('trailerProgress').textContent = 'Need ≥ 2 scene clips first.';
+    return;
+  }
+  const btn = document.getElementById('buildTrailerBtn');
+  btn.disabled = true; document.getElementById('downloadTrailerBtn').disabled = true;
+  document.getElementById('trailerProgress').textContent = 'Loading FFmpeg…';
+
+  try {
+    const { ff, fetchFile } = await loadFFmpeg();
+    const ratio = $('#aspect').value;
+    const { w, h } = aspectDims(ratio);
+    const addCards = document.getElementById('addTitleCards').checked;
+    const titleDur = parseFloat($('#titleDur').value) || 0;
+    const outroDur = parseFloat($('#outroDur').value) || 0;
+    const trailerTitle = ($('#trailerTitle').value || 'CURTIS').trim();
+    const outroText = ($('#outroText').value || '').trim();
+
+    const listPath = 'concat.txt';
+    const listLines = [];
+
+    // 1) Opening title card (single long card)
+    if(addCards && titleDur > 0){
+      const blob = await makeTitleCardBlob(trailerTitle, w, h, { fg:'#d4a24c' });
+      const name = 'card_open.png';
+      await ff.writeFile(name, await fetchFile(blob));
+      listLines.push(`file '${name}'`);
+      listLines.push(`duration ${titleDur}`);
+    }
+
+    // 2) Each scene: title card (optional) + scene clip
+    for(let i=0; i<clips.length; i++){
+      const s = clips[i];
+      if(addCards && titleDur > 0){
+        const blob = await makeTitleCardBlob(`SCENE ${i+1}`, w, h, { fg:'#e7eaf3' });
+        const name = `card_${i}.png`;
+        await ff.writeFile(name, await fetchFile(blob));
+        listLines.push(`file '${name}'`);
+        listLines.push(`duration ${titleDur}`);
+      }
+      const clipName = `clip_${i}.mp4`;
+      TLOG(`Fetching clip ${i+1}/${clips.length}…`);
+      document.getElementById('trailerProgress').textContent = `Fetching clip ${i+1}/${clips.length}…`;
+      const resp = await fetch(s.videoUrl, { mode:'cors' });
+      if(!resp.ok) throw new Error(`Failed to fetch ${s.videoUrl}: HTTP ${resp.status}`);
+      const buf = new Uint8Array(await resp.arrayBuffer());
+      await ff.writeFile(clipName, buf);
+      listLines.push(`file '${clipName}'`);
+    }
+
+    // 3) Outro card
+    if(outroText && outroDur > 0){
+      const blob = await makeTitleCardBlob(outroText, w, h, { fg:'#d4a24c' });
+      await ff.writeFile('card_outro.png', await fetchFile(blob));
+      listLines.push(`file 'card_outro.png'`);
+      listLines.push(`duration ${outroDur}`);
+    }
+
+    // Final entry for concat (last file needs to be repeated, ffmpeg quirk)
+    const last = listLines[listLines.length-2];
+    listLines.push(`file '${last}'`);
+
+    await ff.writeFile(listPath, new TextEncoder().encode(listLines.join('\n')));
+    TLOG(`Concatenating ${clips.length} clip(s)…`);
+
+    // Run ffmpeg concat
+    const outName = 'trailer.mp4';
+    await ff.exec([
+      '-y',
+      '-f', 'concat',
+      '-safe', '0',
+      '-i', listPath,
+      '-vsync', 'vfr',
+      '-pix_fmt', 'yuv420p',
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',
+      '-crf', '22',
+      '-c:a', 'aac',
+      '-b:a', '128k',
+      '-movflags', '+faststart',
+      outName
+    ]);
+
+    const data = await ff.readFile(outName);
+    const blob = new Blob([data.buffer], { type: 'video/mp4' });
+    const url = URL.createObjectURL(blob);
+    const prev = document.getElementById('trailerPreview');
+    prev.innerHTML = `<video src="${url}" controls autoplay style="width:100%;height:100%"></video>`;
+    const dl = document.getElementById('downloadTrailerBtn');
+    dl.disabled = false;
+    dl.onclick = () => {
+      const a = document.createElement('a');
+      a.href = url; a.download = `curtis-trailer-${Date.now()}.mp4`; a.click();
+    };
+    TLOG(`Trailer built: ${(blob.size/1024/1024).toFixed(2)} MB`, 'ok');
+    document.getElementById('trailerProgress').textContent = `Done · ${(blob.size/1024/1024).toFixed(2)} MB`;
+
+    // Cleanup files inside ffmpeg FS to keep it small
+    try {
+      for(const f of ['concat.txt','trailer.mp4']) await ff.deleteFile(f);
+      // cards + clips — best effort
+      await ff.deleteFile('card_open.png').catch(()=>{});
+      for(let i=0; i<clips.length; i++){
+        await ff.deleteFile(`card_${i}.png`).catch(()=>{});
+        await ff.deleteFile(`clip_${i}.mp4`).catch(()=>{});
+      }
+      await ff.deleteFile('card_outro.png').catch(()=>{});
+    } catch{}
+
+  } catch(e){
+    TLOG(`Build failed: ${e.message}`, 'err');
+    document.getElementById('trailerProgress').textContent = 'Build failed';
+  } finally {
+    btn.disabled = false;
+  }
+}
+document.getElementById('buildTrailerBtn').addEventListener('click', buildTrailer);
+
+/* =========================================================================
+   FEATURE 2: Swipe between tabs (mobile)
+   ========================================================================= */
+(function attachSwipe(){
+  const TABS = ['setup','stage','scenes','trailer'];
+  const panel = document.querySelector('.panels');
+  if(!panel) return;
+  let startX = 0, startY = 0, tracking = false, startT = 0;
+  const THRESH = 50; // px
+  panel.addEventListener('touchstart', e => {
+    if(e.touches.length !== 1) return;
+    // Don't capture swipes that begin inside scrollable content (log, scenes, gallery)
+    if(e.target.closest('.log, .scenes, .gallery, .video-strip, .preview video, textarea')) return;
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    startT = Date.now();
+    tracking = true;
+  }, { passive: true });
+  panel.addEventListener('touchmove', e => {
+    if(!tracking) return;
+    const dx = e.touches[0].clientX - startX;
+    const dy = e.touches[0].clientY - startY;
+    if(Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)*1.4){
+      e.preventDefault();
+    }
+  }, { passive: false });
+  panel.addEventListener('touchend', e => {
+    if(!tracking) return;
+    tracking = false;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - startX;
+    const dy = t.clientY - startY;
+    const dt = Date.now() - startT;
+    if(Math.abs(dx) < THRESH || Math.abs(dx) < Math.abs(dy)*1.4 || dt > 600) return;
+    const active = document.querySelector('.tabbar button.active')?.dataset.goto || 'setup';
+    const idx = TABS.indexOf(active);
+    const next = dx < 0 ? TABS[Math.min(idx+1, TABS.length-1)] : TABS[Math.max(idx-1, 0)];
+    if(next && next !== active) showTab(next);
+  }, { passive: true });
+})();
+
+/* =========================================================================
+   FEATURE 3: localStorage persistence
+   ========================================================================= */
+const LS_KEY = 'curtis-trailer-studio:v1';
+const LS_DEBOUNCE_MS = 400;
+
+function saveState(){
+  try {
+    const payload = {
+      v: 1,
+      provider: $('#provider').value,
+      aspect: $('#aspect').value,
+      quality: $('#quality').value,
+      stylePrompt: $('#stylePrompt').value,
+      script: $('#script').value,
+      endpoint: $('#endpoint').value,
+      vidModel: $('#vidModel').value,
+      imgModel: $('#imgModel').value,
+      refUrl: $('#refUrl').value,
+      refRemoteUrl: REF_REMOTE_URL,
+      // scenes — but NOT the data: URL reference (too big) and only metadata
+      scenes: state.scenes.map(s => ({
+        id: s.id, n: s.n, title: s.title, description: s.description,
+        imageUrl: s.imageUrl, videoUrl: s.videoUrl,
+        imageStatus: s.imageStatus, videoStatus: s.videoStatus,
+      })),
+    };
+    localStorage.setItem(LS_KEY, JSON.stringify(payload));
+  } catch(e){ /* quota or private mode */ }
+}
+
+let _saveTimer = null;
+function saveStateDebounced(){
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(saveState, LS_DEBOUNCE_MS);
+}
+
+function loadState(){
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if(!raw) return false;
+    const p = JSON.parse(raw);
+    if(!p || p.v !== 1) return false;
+    if(p.provider)    { $('#provider').value = p.provider; }
+    if(p.aspect)      { $('#aspect').value = p.aspect; }
+    if(p.quality)     { $('#quality').value = p.quality; }
+    if(p.stylePrompt) { $('#stylePrompt').value = p.stylePrompt; }
+    if(p.script)      { $('#script').value = p.script; }
+    if(p.endpoint)    { $('#endpoint').value = p.endpoint; }
+    if(p.vidModel)    { $('#vidModel').value = p.vidModel; }
+    if(p.imgModel)    { $('#imgModel').value = p.imgModel; }
+    if(p.refUrl)      { $('#refUrl').value = p.refUrl; }
+    if(p.refRemoteUrl){ REF_REMOTE_URL = p.refRemoteUrl; $('#refImg').src = REF_REMOTE_URL; $('#refImg').style.display='block'; $('#refEmpty').style.display='none'; }
+    if(Array.isArray(p.scenes) && p.scenes.length){
+      state.scenes = p.scenes;
+      renderScenes(); renderGallery(); renderVideoStrip();
+      const on = state.scenes.length > 0;
+      $('#genAllBtn').disabled = !on;
+      $('#genImagesBtn').disabled = !on;
+      $('#genVideosBtn').disabled = !on;
+    }
+    return true;
+  } catch(e){ return false; }
+}
+
+/* Hook every input that affects state */
+['input','change'].forEach(ev => {
+  document.addEventListener(ev, e => {
+    if(!e.target.matches('#script, #stylePrompt, #provider, #aspect, #quality, #endpoint, #vidModel, #imgModel, #refUrl, #apiKey')) return;
+    saveStateDebounced();
+  }, true);
+});
+/* Save when scenes change too */
+const _origRender = renderScenes;
+window._patchedRender = true; // no-op marker
+/* Patch the state-modifying spots by wrapping common events */
+['#parseBtn','#addSceneBtn','#testBtn','#clearKeyBtn','#exportBtn','#importBtn'].forEach(sel => {
+  const el = document.querySelector(sel);
+  if(!el) return;
+  el.addEventListener('click', () => setTimeout(saveState, 50));
+});
+/* Auto-save when scenes are mutated (delegate to the scenes container) */
+const _scenesEl = document.getElementById('scenes');
+if(_scenesEl){
+  _scenesEl.addEventListener('input', saveStateDebounced);
+  _scenesEl.addEventListener('click', e => {
+    if(e.target.closest('button[data-act]')) setTimeout(saveState, 50);
+  });
+}
+
 /* ---------------- Init ---------------- */
 $('#provider').dispatchEvent(new Event('change'));
-log('Ready. Upload a face reference, paste your A2E API key, then write a script.');
+const restored = loadState();
+log(restored
+  ? `Restored ${state.scenes.length} scene(s) from local storage.`
+  : 'Ready. Upload a face reference, paste your A2E API key, then write a script.');
 </script>
 </body>
 </html>
