@@ -2576,6 +2576,11 @@ function setBanner(kind, html){
   el.innerHTML = html;
 }
 
+function enableLockBtn(){
+  const lb = document.getElementById('lockFaceBtn');
+  if(lb) lb.disabled = !REF_DATA_URL && !REF_REMOTE_URL;
+}
+
 /* ---------------- Init ---------------- */
 // Restore from localStorage FIRST so its values (endpoint, model, etc.)
 // don't get clobbered by the provider change handler that fills defaults.
