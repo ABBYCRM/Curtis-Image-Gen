@@ -567,6 +567,112 @@ Wide shot, library at night. He walks between shelves.
     <div class="log" id="trailerLog" aria-live="polite"></div>
   </section>
 
+  <!-- TAB 5: Settings (persistent config + spend guard) -->
+  <section class="panel" data-tab="settings" aria-label="Settings">
+    <div>
+      <h2>Settings — API Keys & Defaults</h2>
+      <div class="hint">All keys stay in this browser tab (localStorage). The proxy on Render holds its own copy server-side for CORS bypass.</div>
+    </div>
+
+    <div class="sep"></div>
+    <div>
+      <h2>Provider: A2E.ai</h2>
+      <div class="small">Required for: talking-head video from a reference photo. A2E 5s/720p clips.</div>
+    </div>
+    <div>
+      <label>A2E API key <span id="a2eKeyStatus" class="small"></span></label>
+      <input type="password" id="openaiKeyA2E" placeholder="paste A2E key" autocomplete="off" />
+    </div>
+    <div class="row">
+      <div>
+        <label>A2E default image model</label>
+        <input type="text" id="a2eImgModel" value="nanobanana" />
+      </div>
+      <div>
+        <label>A2E default video model</label>
+        <input type="text" id="a2eVidModel" value="userImage2Video" />
+      </div>
+    </div>
+
+    <div class="sep"></div>
+    <div>
+      <h2>Provider: OpenAI (Sora 2 / Sora 2 Pro)</h2>
+      <div class="small" style="color:var(--warn)">⚠ Sora 2 is deprecated by OpenAI and shuts down on <b>September 24, 2026</b>. Plan a migration to Sora 3 or another provider before then.</div>
+      <div class="small" style="margin-top:6px">Pricing (as of 2026): sora-2 = $0.10/sec, sora-2-pro = $0.30/sec. A 12-sec Pro clip = $3.60. Set a spend cap below to avoid surprises.</div>
+    </div>
+    <div>
+      <label>OpenAI API key <span id="openaiKeyStatus" class="small"></span></label>
+      <input type="password" id="openaiKey" placeholder="sk-..." autocomplete="off" />
+    </div>
+    <div class="row3">
+      <div>
+        <label>Default model</label>
+        <select id="openaiDefaultModel">
+          <option value="sora-2">sora-2 ($0.10/sec)</option>
+          <option value="sora-2-pro">sora-2-pro ($0.30/sec)</option>
+        </select>
+      </div>
+      <div>
+        <label>Default duration</label>
+        <select id="openaiDefaultSeconds">
+          <option value="4">4s</option>
+          <option value="8" selected>8s</option>
+          <option value="12">12s</option>
+          <option value="16">16s</option>
+          <option value="20">20s</option>
+        </select>
+      </div>
+      <div>
+        <label>Default size</label>
+        <select id="openaiDefaultSize">
+          <option value="1280x720" selected>1280x720 (16:9)</option>
+          <option value="720x1280">720x1280 (9:16)</option>
+          <option value="1792x1024">1792x1024 (Pro 16:9)</option>
+          <option value="1024x1792">1024x1792 (Pro 9:16)</option>
+          <option value="1920x1080">1920x1080 (Pro FHD)</option>
+          <option value="1080x1920">1080x1920 (Pro FHD vertical)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="sep"></div>
+    <div>
+      <h2>Spend Guard (OpenAI)</h2>
+      <div class="small">Hard-stops OpenAI calls when the estimated session spend exceeds this. Set to 0 to disable.</div>
+    </div>
+    <div class="row">
+      <div>
+        <label>Max spend per session (USD)</label>
+        <input type="number" id="openaiMaxSpend" value="5" min="0" step="0.5" />
+      </div>
+      <div>
+        <label>Estimated spend so far</label>
+        <div id="openaiSpendReadout" class="small" style="padding:12px;background:#0d1018;border:1px solid var(--line);border-radius:10px">$0.00</div>
+      </div>
+    </div>
+
+    <div class="sep"></div>
+    <div>
+      <h2>Provider: Google Gemini / Veo 3.1</h2>
+      <div class="small">Coming soon — Veo via Gemini API. Wire the key here when ready.</div>
+    </div>
+    <div>
+      <label>Gemini API key <span id="geminiKeyStatus" class="small"></span></label>
+      <input type="password" id="geminiKey" placeholder="paste Gemini key" autocomplete="off" />
+    </div>
+
+    <div class="sep"></div>
+    <div>
+      <h2>Maintenance</h2>
+      <div class="small">Erase all locally-stored data and return to factory state. This cannot be undone.</div>
+    </div>
+    <div class="row">
+      <button class="btn danger" id="wipeLocalBtn">Wipe local data</button>
+      <button class="btn" id="saveSettingsBtn">Save settings</button>
+    </div>
+    <div class="progress" id="settingsStatus"></div>
+  </section>
+
   </div><!-- /.panels -->
 
   <nav class="tabbar" aria-label="Sections">
@@ -581,6 +687,9 @@ Wide shot, library at night. He walks between shelves.
     </button>
     <button data-goto="trailer" aria-label="Trailer">
       <span class="ic">🎞️</span><span>Trailer</span>
+    </button>
+    <button data-goto="settings" aria-label="Settings">
+      <span class="ic">⚙</span><span>Settings</span>
     </button>
   </nav>
 </main>
@@ -921,6 +1030,129 @@ const PROVIDERS = {
     _endpoint(){ return document.getElementById('endpoint').value.trim(); },
     _headers(){ return authHeaders(); },
   },
+  openai: {
+    label: "OpenAI Sora 2",
+    /* Sora 2 / Sora 2 Pro via the Render proxy. The proxy holds the
+       OPENAI_API_KEY server-side. As of 2026-08, Sora 2 is deprecated
+       and shuts down 2026-09-24. The Settings tab shows this warning. */
+    defaultEndpoint: "https://curtis-a2e-proxy.onrender.com",
+    imageModel: "sora-2",
+    videoModel: "sora-2",
+    async submitImage({prompt, refUrl, aspect, quality, model}) {
+      // OpenAI doesn't have a free-form text-to-image at v1/videos.
+      // We could use gpt-image-1 at /v1/images/generations, but for the
+      // trailer flow we want one still per scene that we then animate.
+      // Fall back: ask Sora for a 4s video and grab the first frame.
+      // For now this throws so the user knows to pick A2E for stills.
+      throw new Error("OpenAI: use Sora for both image and video. To get a still, ask for a 4s video and the proxy/extractor returns the first frame.");
+    },
+    async pollImage(p){ return { status: "failed", error: "OpenAI provider does not generate stills. Use Sora video and extract a frame, or pick A2E for stills." }; },
+    async submitVideo({refUrl, script, model, aspect}) {
+      // Resolve size from aspect
+      const size = aspect === "9:16" ? "720x1280" : aspect === "1:1" ? "720x720" : "1280x720";
+      // Sora 2 only supports 720p landscape/portrait; Pro supports higher.
+      const sec = String(parseInt(document.getElementById('openaiDefaultSeconds')?.value || '4', 10));
+      const m = model || document.getElementById('openaiDefaultModel')?.value || "sora-2";
+      const body = {
+        model: m,
+        prompt: `${script}\nCinematic, photorealistic. The person must match the reference image.`,
+        size,
+        seconds: sec,
+        input_reference: refUrl,   // <-- FACE LOCK
+      };
+      // Spend guard check
+      if(!checkOpenAISpendOk(m, sec)){
+        throw new Error(`OpenAI spend cap reached. Increase the cap in Settings, or wait for a new session.`);
+      }
+      const r = await fetch(this._endpoint() + "/openai/videos", {
+        method: "POST", headers: this._headers(),
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if(!r.ok) throw new Error(j?.error?.message || `OpenAI HTTP ${r.status}`);
+      // OpenAI v1/videos returns {id, status, ...}
+      return {
+        jobId: j.id,
+        pollUrl: this._endpoint() + "/openai/videos/" + encodeURIComponent(j.id),
+        headers: this._headers(),
+        raw: j,
+      };
+    },
+    async pollVideo({pollUrl, headers}) {
+      const r = await fetch(pollUrl, { headers });
+      const j = await r.json();
+      // OpenAI states: queued, in_progress, completed, failed
+      const status = (j.status || "").toLowerCase();
+      const done = status === "completed";
+      const failed = status === "failed" || status === "error" || status === "canceled";
+      // On completion, OpenAI does NOT inline the video URL — you have to
+      // fetch /v1/videos/{id}/content. The proxy streams the binary.
+      let videoUrl = null;
+      if(done){
+        videoUrl = pollUrl + "/content?variant=mp4";
+        // Record the spend
+        const model = j.model || document.getElementById('openaiDefaultModel')?.value || 'sora-2';
+        const sec = j.seconds || document.getElementById('openaiDefaultSeconds')?.value || '4';
+        if(typeof recordOpenAISpend === 'function') recordOpenAISpend(model, sec);
+      }
+      return { status: done ? "done" : failed ? "failed" : "running", videoUrl, error: j.error?.message };
+    },
+    _endpoint(){ return document.getElementById('endpoint').value.trim() || this.defaultEndpoint; },
+    _headers(){
+      // The proxy doesn't need an Authorization header from the browser —
+      // it injects the key from its env var. We send a hint header so the
+      // proxy knows which provider to route to.
+      return { "Content-Type": "application/json", "X-Provider": "openai" };
+    },
+  },
+
+  gemini: {
+    label: "Google Gemini / Veo",
+    defaultEndpoint: "https://curtis-a2e-proxy.onrender.com",
+    imageModel: "imagen-3",
+    videoModel: "veo-3.1-generate-preview",
+    async submitImage(p){
+      throw new Error("Gemini image gen: use gpt-image-1 via OpenAI provider, or A2E for stills.");
+    },
+    async pollImage(p){ return { status: "failed" }; },
+    async submitVideo({refUrl, script, model, aspect}) {
+      const body = {
+        model: model || this.videoModel,
+        prompt: script,
+        image_url: refUrl,
+        aspect_ratio: aspect === "9:16" ? "9:16" : "16:9",
+      };
+      const r = await fetch(this._endpoint() + "/gemini/videos", {
+        method: "POST", headers: this._headers(),
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if(!r.ok) throw new Error(j?.error?.message || `Gemini HTTP ${r.status}`);
+      // Veo returns {name: "operations/..."} for long-running ops
+      const opName = j.name || j.operation?.name;
+      return {
+        jobId: opName,
+        pollUrl: this._endpoint() + "/gemini/videos/" + encodeURIComponent(opName),
+        headers: this._headers(),
+        raw: j,
+      };
+    },
+    async pollVideo({pollUrl, headers}) {
+      const r = await fetch(pollUrl, { headers });
+      const j = await r.json();
+      // Veo operation: {done: bool, response: {videos: [{gcsUri}]}}
+      const done = !!j.done;
+      const failed = !!j.error;
+      let videoUrl = null;
+      if(done && j.response?.videos?.[0]?.gcsUri){
+        videoUrl = j.response.videos[0].gcsUri;
+      }
+      return { status: done ? "done" : failed ? "failed" : "running", videoUrl, error: j.error?.message };
+    },
+    _endpoint(){ return document.getElementById('endpoint').value.trim() || this.defaultEndpoint; },
+    _headers(){ return { "Content-Type": "application/json", "X-Provider": "gemini" }; },
+  },
+
 };
 
 /* ---------------- Shared HTTP helpers ---------------- */
@@ -1681,8 +1913,103 @@ function canBuildTrailer(){
 }
 
 /* =========================================================================
-   FEATURE 1: Trailer builder (FFmpeg.wasm in-browser concat)
+   FEATURE 0.5: OpenAI spend tracker + Settings load/save
    ========================================================================= */
+const OPENAI_PRICE = { 'sora-2': 0.10, 'sora-2-pro': 0.30 };
+let openaiSpend = 0;  // USD, estimated for the current session
+
+function checkOpenAISpendOk(model, seconds){
+  const cap = parseFloat(localStorage.getItem('openaiMaxSpend') || '5');
+  if(cap <= 0) return true;  // 0 = disabled
+  const cost = (OPENAI_PRICE[model] || 0.10) * parseInt(seconds, 10);
+  return (openaiSpend + cost) <= cap;
+}
+function recordOpenAISpend(model, seconds){
+  const cost = (OPENAI_PRICE[model] || 0.10) * parseInt(seconds, 10);
+  openaiSpend += cost;
+  try { localStorage.setItem('openaiSpend', String(openaiSpend)); } catch{}
+  updateOpenAISpendReadout();
+}
+function updateOpenAISpendReadout(){
+  const el = document.getElementById('openaiSpendReadout');
+  if(!el) return;
+  const cap = parseFloat(localStorage.getItem('openaiMaxSpend') || '5');
+  el.textContent = `$${openaiSpend.toFixed(2)} / $${cap.toFixed(2)}`;
+  el.style.color = cap > 0 && openaiSpend >= cap ? 'var(--bad)' : 'var(--ok)';
+}
+
+const SETTINGS_KEY = 'curtis-trailer-studio:settings:v1';
+function saveSettings(){
+  const s = {
+    a2eKey:       document.getElementById('openaiKeyA2E')?.value || '',
+    a2eImgModel:  document.getElementById('a2eImgModel')?.value || 'nanobanana',
+    a2eVidModel:  document.getElementById('a2eVidModel')?.value || 'userImage2Video',
+    openaiKey:    document.getElementById('openaiKey')?.value || '',
+    openaiModel:  document.getElementById('openaiDefaultModel')?.value || 'sora-2',
+    openaiSec:    document.getElementById('openaiDefaultSeconds')?.value || '8',
+    openaiSize:   document.getElementById('openaiDefaultSize')?.value || '1280x720',
+    openaiMaxSpend: document.getElementById('openaiMaxSpend')?.value || '5',
+    geminiKey:    document.getElementById('geminiKey')?.value || '',
+  };
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch{}
+  // also mirror the per-shot inputs that the rest of the code reads
+  if(s.a2eKey)        { document.getElementById('apiKey').value = s.a2eKey; }
+  if(s.a2eImgModel)   { document.getElementById('imgModel').value = s.a2eImgModel; }
+  if(s.a2eVidModel)   { document.getElementById('vidModel').value = s.a2eVidModel; }
+  document.getElementById('settingsStatus').textContent = 'Saved.';
+  setTimeout(() => { document.getElementById('settingsStatus').textContent = ''; }, 2000);
+  updateOpenAISpendReadout();
+  log('Settings saved', 'ok');
+}
+function loadSettings(){
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if(!raw) return;
+    const s = JSON.parse(raw);
+    if(s.a2eKey)         { const el=document.getElementById('openaiKeyA2E'); if(el) el.value=s.a2eKey; }
+    if(s.a2eImgModel)    { const el=document.getElementById('a2eImgModel'); if(el) el.value=s.a2eImgModel; }
+    if(s.a2eVidModel)    { const el=document.getElementById('a2eVidModel'); if(el) el.value=s.a2eVidModel; }
+    if(s.openaiKey)      { const el=document.getElementById('openaiKey');   if(el) el.value=s.openaiKey; }
+    if(s.openaiModel)    { const el=document.getElementById('openaiDefaultModel'); if(el) el.value=s.openaiModel; }
+    if(s.openaiSec)      { const el=document.getElementById('openaiDefaultSeconds'); if(el) el.value=s.openaiSec; }
+    if(s.openaiSize)     { const el=document.getElementById('openaiDefaultSize'); if(el) el.value=s.openaiSize; }
+    if(s.openaiMaxSpend!=null) { const el=document.getElementById('openaiMaxSpend'); if(el) el.value=s.openaiMaxSpend; localStorage.setItem('openaiMaxSpend', s.openaiMaxSpend); }
+    if(s.geminiKey)      { const el=document.getElementById('geminiKey');  if(el) el.value=s.geminiKey; }
+    // restore the per-shot fields from settings
+    if(s.a2eKey)         { const el=document.getElementById('apiKey');    if(el) el.value=s.a2eKey; }
+    if(s.a2eImgModel)    { const el=document.getElementById('imgModel');  if(el) el.value=s.a2eImgModel; }
+    if(s.a2eVidModel)    { const el=document.getElementById('vidModel');  if(el) el.value=s.a2eVidModel; }
+    // restore spend counter
+    const storedSpend = parseFloat(localStorage.getItem('openaiSpend') || '0');
+    if(!isNaN(storedSpend)) openaiSpend = storedSpend;
+  } catch(e){}
+  updateOpenAISpendReadout();
+}
+function wipeLocal(){
+  if(!confirm('Wipe ALL local data? This deletes keys, scenes, settings, and spend counter. Cannot be undone.')) return;
+  try {
+    for(const k of Object.keys(localStorage)) localStorage.removeItem(k);
+  } catch{}
+  location.reload();
+}
+
+/* Provider dropdown update — add OpenAI and Gemini */
+const _origProviderChange = document.getElementById('provider');
+function refreshProviderDropdown(){
+  const sel = document.getElementById('provider');
+  if(!sel || sel.querySelector('option[value="openai"]')) return;
+  const a2e = sel.querySelector('option[value="a2e"]');
+  const openaiOpt = document.createElement('option');
+  openaiOpt.value = 'openai';
+  openaiOpt.textContent = 'OpenAI Sora 2 (⚠ deprecates 2026-09-24)';
+  if(a2e) a2e.after(openaiOpt);
+  const geminiOpt = document.createElement('option');
+  geminiOpt.value = 'gemini';
+  geminiOpt.textContent = 'Google Gemini / Veo';
+  if(openaiOpt) openaiOpt.after(geminiOpt);
+}
+
+
 let _ffmpeg = null, _ffmpegLoading = null;
 const TLOG = (msg, cls='') => {
   const t = new Date().toLocaleTimeString();
@@ -2029,10 +2356,31 @@ if(_scenesEl){
 // Restore from localStorage FIRST so its values (endpoint, model, etc.)
 // don't get clobbered by the provider change handler that fills defaults.
 const restored = loadState();
+refreshProviderDropdown();
+loadSettings();
 $('#provider').dispatchEvent(new Event('change'));
+
+// Settings tab wiring
+const _saveBtn = document.getElementById('saveSettingsBtn');
+if(_saveBtn) _saveBtn.addEventListener('click', saveSettings);
+const _wipeBtn = document.getElementById('wipeLocalBtn');
+if(_wipeBtn) _wipeBtn.addEventListener('click', wipeLocal);
+// Auto-save settings on blur so users don't lose keys
+['openaiKeyA2E','a2eImgModel','a2eVidModel','openaiKey','openaiDefaultModel','openaiDefaultSeconds','openaiDefaultSize','openaiMaxSpend','geminiKey'].forEach(id => {
+  const el = document.getElementById(id);
+  if(!el) return;
+  el.addEventListener('change', () => {
+    saveSettings();
+    // Mirror to per-shot fields immediately
+    if(id === 'openaiKeyA2E'){ const k = document.getElementById('apiKey'); if(k) k.value = el.value; }
+    if(id === 'a2eImgModel')  { const k = document.getElementById('imgModel'); if(k) k.value = el.value; }
+    if(id === 'a2eVidModel')  { const k = document.getElementById('vidModel'); if(k) k.value = el.value; }
+  });
+});
+
 log(restored
   ? `Restored ${state.scenes.length} scene(s) from local storage.`
-  : 'Ready. Upload a face reference, paste your A2E API key, then write a script.');
+  : 'Ready. Open Settings to paste an API key, then upload a face reference and write a script.');
 </script>
 </body>
 </html>
