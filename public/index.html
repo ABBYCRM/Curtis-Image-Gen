@@ -87,6 +87,47 @@
   .panel .hint{color:var(--muted);font-size:12.5px;line-height:1.5}
 
   /* ---------- Form controls ---------- */
+
+  /* ---------- Setup tab: steps + status banner ---------- */
+  .setup-banner{
+    display:flex; align-items:flex-start; gap:10px;
+    padding:12px 14px; border-radius:12px;
+    border:1px solid var(--line); background:#0d1018;
+    line-height:1.45; font-size:14px;
+  }
+  .setup-banner .banner-icon{
+    flex:0 0 auto; font-size:14px; line-height:1.4; margin-top:1px;
+  }
+  .setup-banner .banner-text{flex:1 1 auto}
+  .setup-banner-info{ border-color:#2a3045; color:var(--muted); }
+  .setup-banner-info .banner-icon{ color:var(--muted); }
+  .setup-banner-warn{ border-color:#3a2c1a; background:rgba(255,180,84,.08); color:#ffd9a0; }
+  .setup-banner-warn .banner-icon{ color:var(--warn); }
+  .setup-banner-bad{ border-color:#3a1f1f; background:rgba(255,107,107,.08); color:#ffb0b0; }
+  .setup-banner-bad .banner-icon{ color:var(--bad); }
+  .setup-banner-ok{ border-color:#1f3a2e; background:rgba(70,211,154,.08); color:#a8e8c8; }
+  .setup-banner-ok .banner-icon{ color:var(--ok); }
+  .setup-banner a{ color:inherit; text-decoration:underline; }
+
+  .step{
+    display:grid; grid-template-columns: 32px 1fr; gap:12px;
+    padding:14px; border:1px solid var(--line); border-radius:14px;
+    background:linear-gradient(180deg, var(--panel), #11141c);
+  }
+  .step-num{
+    width:32px; height:32px; border-radius:50%;
+    background:linear-gradient(180deg, #e9b25c, #a8772a);
+    color:#1a1300; font-weight:800; display:flex; align-items:center; justify-content:center;
+    font-size:15px;
+  }
+  .step-body{ min-width:0; }
+  .step-title{ font-size:15px; font-weight:700; margin-bottom:2px; }
+  .step-hint{ font-size:12.5px; color:var(--muted); margin-bottom:10px; line-height:1.5; }
+  .btn-mega{
+    width:100%; padding:18px; font-size:16px; min-height:60px;
+    border-radius:14px; letter-spacing:.3px;
+  }
+
   label{font-size:12px;color:var(--muted);display:block;margin-bottom:6px;font-weight:500}
   input[type=text], input[type=password], input[type=url], input[type=file], select, textarea{
     width:100%; background:#0d1018; color:var(--text);
@@ -339,138 +380,118 @@
   <div class="panels">
 
   <!-- TAB 1: Identity + Script -->
-  <section class="panel" data-tab="setup" aria-label="Identity & Script">
-    <div>
-      <h2>1. Identity Reference</h2>
-      <div class="hint">Upload ONE clear face photo. The same image is sent as <span class="kbd">image_url</span> on every call. This is what stops the model from inventing a new face.</div>
+  <section class="panel" data-tab="setup" aria-label="Make a trailer">
+    <!-- Status banner — shows what's actually wrong, in plain English -->
+    <div id="setupBanner" class="setup-banner setup-banner-info">
+      <div class="banner-icon">●</div>
+      <div class="banner-text" id="bannerText">Drop a face photo, paste your script, and you\'re ready to go.</div>
     </div>
 
-    <div class="refwrap" id="refWrap">
-      <span class="badge">REFERENCE</span>
-      <span class="lock">🔒 LOCKED</span>
-      <div class="empty" id="refEmpty">Drop a face photo here<br>or paste an image URL</div>
-      <img id="refImg" alt="reference" style="display:none" />
-    </div>
-
-    <div class="row">
-      <div>
-        <label>Upload photo</label>
-        <input type="file" id="refFile" accept="image/*" />
-      </div>
-      <div>
-        <label>…or paste image URL</label>
-        <input type="url" id="refUrl" placeholder="https://…" />
-      </div>
-    </div>
-
-    <div class="row">
-      <div>
-        <label>Face match threshold <span class="small">(0.50 strict → 0.80 loose)</span></label>
-        <input type="number" id="faceThreshold" min="0.40" max="0.90" step="0.01" value="0.62" />
-      </div>
-      <div style="display:flex;align-items:flex-end;gap:6px">
-        <button class="btn primary small" id="lockFaceBtn" disabled>🔒 Lock this face</button>
-        <button class="btn ghost small" id="unlockFaceBtn" style="display:none">Unlock</button>
-      </div>
-    </div>
-    <div class="small" id="lockStatus" style="color:var(--muted)">Upload or paste a face photo, then click <b>Lock this face</b>. All scene stills will be auto-checked against it before being accepted.</div>
-
-    <div class="row">
-      <div>
-        <label>Output aspect</label>
-        <select id="aspect">
-          <option value="1:1">1:1 (square)</option>
-          <option value="16:9" selected>16:9 (cinematic)</option>
-          <option value="9:16">9:16 (vertical)</option>
-          <option value="4:5">4:5 (poster)</option>
-        </select>
-      </div>
-      <div>
-        <label>Image quality</label>
-        <select id="quality">
-          <option value="1K">1K</option>
-          <option value="2K" selected>2K</option>
-          <option value="4K">4K</option>
-        </select>
+    <!-- STEP 1: Face photo -->
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <div class="step-title">Face photo</div>
+        <div class="step-hint">One clear, well-lit photo of the person who\'ll appear in every scene.</div>
+        <div class="refwrap" id="refWrap">
+          <span class="badge">REFERENCE</span>
+          <span class="lock" id="refLockBadge" style="display:none">🔒 LOCKED</span>
+          <div class="empty" id="refEmpty">Drop a face photo here<br>or use the button below</div>
+          <img id="refImg" alt="reference" style="display:none" />
+        </div>
+        <div class="row" style="margin-top:8px">
+          <div>
+            <input type="file" id="refFile" accept="image/*" style="font-size:13px" />
+          </div>
+          <div>
+            <input type="url" id="refUrl" placeholder="…or paste image URL" style="font-size:13px" />
+          </div>
+        </div>
+        <div class="row" style="margin-top:6px;align-items:center">
+          <label style="margin:0;display:flex;align-items:center;gap:6px">
+            <input type="checkbox" id="faceLockChk" checked>
+            <span>Lock face — re-roll any still that doesn\'t look like this person</span>
+          </label>
+        </div>
+        <details style="margin-top:6px">
+          <summary class="small" style="cursor:pointer;color:var(--muted)">Advanced: face match strictness</summary>
+          <div class="row" style="margin-top:6px">
+            <div>
+              <label>Threshold <span class="small">(0.50 strict → 0.80 loose)</span></label>
+              <input type="number" id="faceThreshold" min="0.40" max="0.90" step="0.01" value="0.62" />
+            </div>
+          </div>
+        </details>
       </div>
     </div>
 
-    <div class="sep"></div>
-
-    <div>
-      <h2>2. A2E API Connection</h2>
-      <div class="hint">No password, no login. Paste your API key, pick the provider. Key is kept in this browser tab only.</div>
-    </div>
-
-    <div>
-      <label>Provider</label>
-      <select id="provider">
-        <option value="a2e">a2e.ai (default endpoint)</option>
-        <option value="hedra">Hedra</option>
-        <option value="heygen">HeyGen (Photo Avatar)</option>
-        <option value="did">D-ID</option>
-        <option value="fal-hedra">fal.ai · hedra-video-1</option>
-        <option value="replicate">Replicate (hedra / omnihuman)</option>
-        <option value="custom">Custom endpoint…</option>
-      </select>
-    </div>
-
-    <div>
-      <label>API key</label>
-      <input type="password" id="apiKey" placeholder="paste key" autocomplete="off" />
-    </div>
-
-    <div>
-      <label id="endpointLabel">Endpoint URL (override if needed)</label>
-      <input type="text" id="endpoint" placeholder="auto-filled from provider" />
-    </div>
-
-    <div class="row">
-      <div>
-        <label>Video model (image → video)</label>
-        <input type="text" id="vidModel" placeholder="e.g. hedra/video-1, omnihuman, a2e-talking" />
-      </div>
-      <div>
-        <label>Image model (still frames)</label>
-        <input type="text" id="imgModel" placeholder="e.g. flux-pro, imagen-3, nano-banana" />
-      </div>
-    </div>
-
-    <div class="row">
-      <button class="btn" id="testBtn">Test connection</button>
-      <button class="btn ghost small" id="clearKeyBtn">Clear key</button>
-    </div>
-
-    <div class="sep"></div>
-
-    <div>
-      <h2>3. Script</h2>
-      <div class="hint">Write the trailer script here. Each <span class="kbd">---</span> separator starts a new scene. The first line of each scene is treated as the scene title.</div>
-    </div>
-
-    <div>
-      <label>Trailer script</label>
-      <textarea id="script" placeholder="Title
+    <!-- STEP 2: Script -->
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <div class="step-title">Script</div>
+        <div class="step-hint">What happens in the trailer. Separate scenes with <span class="kbd">---</span> on its own line. First line of each block is the scene title.</div>
+        <textarea id="script" style="min-height:160px" placeholder="CURTIS
 ---
-A dimly lit study. He turns to camera and says:
-'In every silence, there's a story waiting to be told.'
+Dimly lit study. He turns to camera and says:
+\'In every silence, there\'s a story waiting to be told.\'
 ---
 Wide shot, library at night. He walks between shelves.
-'Some doors only open from the inside.'"></textarea>
+\'Some doors only open from the inside.\'"></textarea>
+        <div class="row" style="margin-top:8px">
+          <button class="btn small" id="parseBtn">Parse into scenes</button>
+          <button class="btn ghost small" id="addSceneBtn">+ Blank scene</button>
+        </div>
+      </div>
     </div>
 
-    <div class="row">
-      <button class="btn primary" id="parseBtn">Parse into scenes</button>
-      <button class="btn ghost" id="addSceneBtn">+ Add blank scene</button>
-    </div>
-
-    <div class="sep"></div>
-    <div>
-      <h2>4. Style prompt (applied to every scene)</h2>
-      <div class="small">Cinematic, warm, low-key lighting. Match the reference photo's wardrobe and setting unless the scene description overrides it.</div>
-      <textarea id="stylePrompt" style="margin-top:6px">cinematic film still, warm low-key lighting, shallow depth of field, golden hour tones, anamorphic lens, 35mm grain, photorealistic, the same adult man from the reference photo, identical face, identical skin tone, identical build, wearing the same black suit and gold tie, in a dim wood-paneled study with leather furniture and bookshelves</textarea>
+    <!-- STEP 3: Make it -->
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <div class="step-title">Make it</div>
+        <div class="step-hint">Generates one still per scene, then animates each into a short clip, then joins them into one trailer.</div>
+        <button class="btn primary btn-mega" id="makeTrailerBtn">🎬  Make my trailer</button>
+        <div class="progress" id="makeProgress" style="margin-top:8px"></div>
+        <details style="margin-top:10px">
+          <summary class="small" style="cursor:pointer;color:var(--muted)">Advanced options</summary>
+          <div class="row" style="margin-top:8px">
+            <div>
+              <label>Aspect</label>
+              <select id="aspect">
+                <option value="1:1">1:1 (square)</option>
+                <option value="16:9" selected>16:9 (cinematic)</option>
+                <option value="9:16">9:16 (vertical)</option>
+                <option value="4:5">4:5 (poster)</option>
+              </select>
+            </div>
+            <div>
+              <label>Quality</label>
+              <select id="quality">
+                <option value="1K">1K</option>
+                <option value="2K" selected>2K</option>
+                <option value="4K">4K</option>
+              </select>
+            </div>
+          </div>
+          <div style="margin-top:8px">
+            <label>Style prompt <span class="small">(applies to every scene unless overridden)</span></label>
+            <textarea id="stylePrompt" style="min-height:80px">cinematic film still, warm low-key lighting, shallow depth of field, golden hour tones, anamorphic lens, 35mm grain, photorealistic, the same adult man from the reference photo, identical face, identical skin tone, identical build, wearing the same black suit and gold tie, in a dim wood-paneled study with leather furniture and bookshelves</textarea>
+          </div>
+        </details>
+        <details style="margin-top:8px">
+          <summary class="small" style="cursor:pointer;color:var(--muted)">Run only part of the pipeline</summary>
+          <div class="row" style="margin-top:8px">
+            <button class="btn small-btn" id="genImagesBtn" disabled>Stills only</button>
+            <button class="btn small-btn" id="genVideosBtn" disabled>Videos only</button>
+            <button class="btn small-btn ghost" id="stopBtn" disabled>Stop</button>
+          </div>
+        </details>
+      </div>
     </div>
   </section>
+
+  <!-- TAB 2: Stage -->
 
   <!-- TAB 2: Stage -->
   <section class="stage" data-tab="stage" aria-label="Stage">
@@ -1044,7 +1065,10 @@ const PROVIDERS = {
       // trailer flow we want one still per scene that we then animate.
       // Fall back: ask Sora for a 4s video and grab the first frame.
       // For now this throws so the user knows to pick A2E for stills.
-      throw new Error("OpenAI: use Sora for both image and video. To get a still, ask for a 4s video and the proxy/extractor returns the first frame.");
+      const e = new Error("OpenAI: use Sora for both image and video. To get a still, ask for a 4s video and the proxy/extractor returns the first frame.");
+      e.friendly = "OpenAI doesn't generate stills directly. Switch the provider to A2E in Settings, or use the trailer workflow which generates a 4s Sora clip per scene and uses its first frame as the still.";
+      e.configError = true;
+      throw e;
     },
     async pollImage(p){ return { status: "failed", error: "OpenAI provider does not generate stills. Use Sora video and extract a frame, or pick A2E for stills." }; },
     async submitVideo({refUrl, script, model, aspect}) {
@@ -1062,14 +1086,23 @@ const PROVIDERS = {
       };
       // Spend guard check
       if(!checkOpenAISpendOk(m, sec)){
-        throw new Error(`OpenAI spend cap reached. Increase the cap in Settings, or wait for a new session.`);
+        const e = new Error(`OpenAI spend cap reached. Increase the cap in Settings, or wait for a new session.`);
+        e.friendly = "OpenAI spend cap reached. Open Settings (⚙) and raise the 'Max spend per session' cap.";
+        e.configError = true;
+        throw e;
       }
       const r = await fetch(this._endpoint() + "/openai/videos", {
         method: "POST", headers: this._headers(),
         body: JSON.stringify(body),
       });
       const j = await r.json();
-      if(!r.ok) throw new Error(j?.error?.message || `OpenAI HTTP ${r.status}`);
+      if(!r.ok){
+        const e = new Error(j?.error?.message || `OpenAI HTTP ${r.status}`);
+        e.friendly = j.friendly || e.message;
+        e.configError = j.retryable === false;
+        e.raw = j;
+        throw e;
+      }
       // OpenAI v1/videos returns {id, status, ...}
       return {
         jobId: j.id,
@@ -1127,7 +1160,13 @@ const PROVIDERS = {
         body: JSON.stringify(body),
       });
       const j = await r.json();
-      if(!r.ok) throw new Error(j?.error?.message || `Gemini HTTP ${r.status}`);
+      if(!r.ok){
+        const e = new Error(j?.error?.message || `Gemini HTTP ${r.status}`);
+        e.friendly = j.friendly || e.message;
+        e.configError = j.retryable === false;
+        e.raw = j;
+        throw e;
+      }
       // Veo returns {name: "operations/..."} for long-running ops
       const opName = j.name || j.operation?.name;
       return {
@@ -1176,14 +1215,23 @@ async function postJson(url, body, headers){
   let j; try{ j = JSON.parse(text); } catch{ j = { raw: text }; }
   if(!r.ok){
     log(`<err>HTTP ${r.status}: ${text.slice(0,300)}</err>`, "err");
-    throw new Error(`HTTP ${r.status}: ${text.slice(0,200)}`);
+    const e = new Error(`HTTP ${r.status}: ${text.slice(0,200)}`);
+    e.friendly = j.friendly || `Proxy returned HTTP ${r.status}.`;
+    e.configError = j.retryable === false;
+    e.raw = j;
+    throw e;
   }
   // If the A2E proxy returned a non-zero `code`, surface that as an error.
   // Only check for A2E — other providers don't use a `code` envelope.
   if(url.includes('/a2e') && typeof j.code === "number" && j.code !== 0){
     const msg = j.message || j.msg || j.error || JSON.stringify(j).slice(0,200);
-    log(`<err>A2E error ${j.code}: ${msg}</err>`, "err");
-    throw new Error(`A2E error ${j.code}: ${msg}`);
+    const friendly = j.friendly || msg;
+    log(`<err>${friendly}</err>`, "err");
+    const e = new Error(friendly);
+    e.friendly = friendly;
+    e.configError = j.retryable === false;
+    e.raw = j;
+    throw e;
   }
   // Try to discover job id + poll URL.
   // A2E's real shape: {code:0, data:{_id, current_status, ...}}
@@ -1243,10 +1291,24 @@ async function pollReplicate({pollUrl, headers, raw}){
 
 async function pollUntilDone(poller, ctx, label){
   const t0 = Date.now();
+  let attempts = 0;
   while(true){
     const r = await poller(ctx);
     if(r.status === "done")  { log(`<ok>${label} done in ${((Date.now()-t0)/1000).toFixed(1)}s</ok>`, "ok"); return r; }
-    if(r.status === "failed"){ log(`<err>${label} failed: ${r.error||"unknown"}</err>`, "err"); throw new Error(r.error || "job failed"); }
+    if(r.status === "failed"){
+      log(`<err>${label} failed: ${r.error||"unknown"}</err>`, "err");
+      const e = new Error(r.error || "job failed");
+      e.friendly = r.error || "The provider rejected the job.";
+      e.configError = true;  // A2E-style failures during poll are usually config
+      throw e;
+    }
+    attempts++;
+    if(attempts > 60){  // 60 * 2.5s = 150s hard cap
+      const e = new Error(`${label} timed out after 150s`);
+      e.friendly = `${label} is taking too long. The provider might be overloaded. Try again later.`;
+      e.configError = false;
+      throw e;
+    }
     await sleep(2500);
   }
 }
@@ -1506,46 +1568,184 @@ $('#addSceneBtn').addEventListener('click', () => {
   $('#genVideosBtn').disabled = false;
 });
 
-$('#testBtn').addEventListener('click', async () => {
-  try{
-    const ref = await uploadReferenceIfNeeded();
-    const p = currentProvider();
-    log(`Testing ${p.label}…`);
-    const sub = await p.submitImage({
-      prompt: "test portrait",
-      refUrl: ref,
-      aspect: $('#aspect').value,
-      quality: $('#quality').value,
-      model: $('#imgModel').value.trim() || p.imageModel,
-    });
-    log(`Test job submitted: ${sub.jobId || '(no id)'}`);
-    const res = await pollUntilDone(p.pollImage, sub, "Test");
-    log(`<ok>Connection OK</ok>`, "ok");
-    setConn('connected', `Test call to ${p.label} succeeded`);
-  } catch(e){
-    // A2E returns structured errors as {code, msg} wrapped in HTTP 200
-    // (we normalized this in the proxy). Check the last log line for the
-    // provider's human-readable message.
-    const msg = (e.message || '').slice(0, 200);
-    if(msg.includes('HTTP ') || msg.includes('fetch')){
-      setConn('unreachable', msg);
-    } else {
-      // Provider reachable but rejected — likely auth/plan issue
-      setConn('auth', msg);
+// Test connection button — only present in Settings (legacy Setup), so
+// null-safe. Kept here because some users may have it cached in their
+// localStorage scene data.
+const _testBtnEl = document.getElementById('testBtn');
+if(_testBtnEl){
+  _testBtnEl.addEventListener('click', async () => {
+    try{
+      const ref = await uploadReferenceIfNeeded();
+      const p = currentProvider();
+      log(`Testing ${p.label}…`);
+      const sub = await p.submitImage({
+        prompt: "test portrait",
+        refUrl: ref,
+        aspect: $('#aspect')?.value || '16:9',
+        quality: $('#quality')?.value || '2K',
+        model: $('#imgModel')?.value?.trim() || p.imageModel,
+      });
+      log(`Test job submitted: ${sub.jobId || '(no id)'}`);
+      const res = await pollUntilDone(p.pollImage, sub, "Test");
+      log(`<ok>Connection OK</ok>`, "ok");
+      setConn('connected', `Test call to ${p.label} succeeded`);
+    } catch(e){
+      const friendly = e.friendly || (e.message || '').slice(0, 200);
+      if(friendly.includes('HTTP ') || friendly.includes('fetch') || friendly.includes('reach')){
+        setConn('unreachable', friendly);
+      } else {
+        setConn('auth', friendly);
+      }
+      log(`<err>${friendly}</err>`, "err");
     }
-    log(`<err>Connection failed: ${msg}</err>`, "err");
+  });
+}
+
+const _clearKeyBtnEl = document.getElementById('clearKeyBtn');
+if(_clearKeyBtnEl){
+  _clearKeyBtnEl.addEventListener('click', () => {
+    const k = document.getElementById('apiKey'); if(k) k.value = '';
+    log('API key cleared');
+  });
+}
+
+// Backwards-compat: the old "Generate all" / "Stills only" / "Videos only"
+// buttons used to live on the Stage tab. They may still exist on cached
+// pages; wire them to the same handler the new Make-trailer button uses.
+const _genAllBtnEl = document.getElementById('genAllBtn');
+if(_genAllBtnEl) _genAllBtnEl.addEventListener('click', () => generateAll(true, true));
+const _genImagesBtnEl = document.getElementById('genImagesBtn');
+if(_genImagesBtnEl) _genImagesBtnEl.addEventListener('click', () => generateAll(true, false));
+const _genVideosBtnEl = document.getElementById('genVideosBtn');
+if(_genVideosBtnEl) _genVideosBtnEl.addEventListener('click', () => generateAll(false, true));
+const _stopBtnEl = document.getElementById('stopBtn');
+if(_stopBtnEl) _stopBtnEl.addEventListener('click', () => { state.stop = true; log('Stop requested', 'warn'); });
+
+// The big "Make my trailer" button on the new Setup tab. Does the whole
+// pipeline: stills → videos → trailer. Reports progress into the banner
+// and the per-tab log.
+const _makeTrailerBtnEl = document.getElementById('makeTrailerBtn');
+if(_makeTrailerBtnEl) _makeTrailerBtnEl.addEventListener('click', () => makeTrailer());
+
+async function makeTrailer(){
+  // 1. Sanity checks with friendly messages
+  if(!state.scenes.length){
+    const txt = ($('#script')?.value || '').trim();
+    if(!txt){
+      setBanner('bad', 'Add a script first. Type a line or two and click Parse into scenes.');
+      return;
+    }
+    state.scenes = parseScript(txt);
+    renderScenes(); renderGallery(); renderVideoStrip();
+    if(!state.scenes.length){
+      setBanner('bad', 'Couldn\\'t find any scenes. Separate scenes with --- on its own line.');
+      return;
+    }
   }
-});
+  try {
+    await uploadReferenceIfNeeded();
+  } catch(e){
+    setBanner('bad', e.message || 'Add a face photo before making the trailer.');
+    return;
+  }
+  if(!$('#faceLockChk')?.checked && !FACE_LOCKED){
+    setBanner('warn', 'Face lock is off. The generated stills might not look like the reference. Enable it in step 1 for consistent results.');
+  }
+  const ref = REF_DATA_URL || REF_REMOTE_URL || $('#refUrl')?.value?.trim();
+  if(!ref){
+    setBanner('bad', 'Add a face photo first.');
+    return;
+  }
 
-$('#clearKeyBtn').addEventListener('click', () => {
-  $('#apiKey').value = '';
-  log('API key cleared');
-});
+  // 2. Detect best provider
+  const provider = pickBestProvider();
+  if(!provider){
+    setBanner('bad', 'No provider is configured. Open Settings (⚙), paste an API key, and try again.');
+    return;
+  }
+  // Sync the dropdown so the rest of the code uses the right provider
+  $('#provider').value = provider.key;
+  $('#provider').dispatchEvent(new Event('change'));
 
-$('#genAllBtn').addEventListener('click', () => generateAll(true, true));
-$('#genImagesBtn').addEventListener('click', () => generateAll(true, false));
-$('#genVideosBtn').addEventListener('click', () => generateAll(false, true));
-$('#stopBtn').addEventListener('click', () => { state.stop = true; log('Stop requested', 'warn'); });
+  setBanner('ok', `Using <b>${provider.label}</b>. ${state.scenes.length} scene(s) queued. Hold on — this takes a few minutes.`);
+  $('#makeTrailerBtn').disabled = true;
+  progressEl.textContent = '';
+
+  try {
+    // Stage 1: stills
+    setMakeProgress(`1/3 — generating ${state.scenes.length} still(s)…`);
+    await generateAll(true, false, ref);
+
+    // Check for config errors before going further
+    const cfgErr = state.scenes.find(s => s.imageStatus === 'failed' && s._configError);
+    if(cfgErr){
+      setBanner('bad', `Stopped: ${cfgErr._configError}`);
+      $('#makeTrailerBtn').disabled = false;
+      return;
+    }
+
+    // Stage 2: videos
+    setMakeProgress('2/3 — animating each still into a clip…');
+    await generateAll(false, true, ref);
+
+    const videoErr = state.scenes.find(s => s.videoStatus === 'failed' && s._configError);
+    if(videoErr){
+      setBanner('bad', `Stopped: ${videoErr._configError}`);
+      $('#makeTrailerBtn').disabled = false;
+      return;
+    }
+
+    // Stage 3: trailer
+    setMakeProgress('3/3 — joining all clips into one trailer (this is the slow one)…');
+    showTab('trailer');
+    // Wait a tick so the trailer tab renders before we kick off the heavy work
+    await new Promise(r => setTimeout(r, 200));
+    await buildTrailer();
+
+    setBanner('ok', `🎬 Done. Your trailer is on the <b>Trailer</b> tab. Hit Download to save it.`);
+  } catch(e){
+    const friendly = e.friendly || e.message || 'Something went wrong.';
+    setBanner('bad', friendly);
+  } finally {
+    $('#makeTrailerBtn').disabled = false;
+  }
+}
+
+function setMakeProgress(text){
+  const el = document.getElementById('makeProgress');
+  if(el) el.textContent = text;
+  progressEl.textContent = text;
+  log(text);
+}
+
+function setBanner(level, text){
+  const el = document.getElementById('setupBanner');
+  if(!el) return;
+  el.className = 'setup-banner setup-banner-' + level;
+  document.getElementById('bannerText').innerHTML = text;
+}
+
+// Pick the first provider whose key is configured. Order: A2E (primary,
+// since it does both stills and videos and is what we know works), then
+// OpenAI, then Gemini. The user can override in Settings.
+async function pickBestProvider(){
+  try {
+    const endpoint = (PROVIDERS.a2e._endpoint() || '').replace(/\/a2e$/, '');
+    const r = await fetch(endpoint + '/', { method: 'GET', mode: 'cors' });
+    if(!r.ok) return null;
+    const j = await r.json();
+    if(!j.providers) return null;
+    const order = ['a2e', 'openai', 'gemini'];
+    for(const k of order){
+      if(j.providers[k]?.ready === true){
+        return { key: k, label: j.providers[k].label || k };
+      }
+    }
+    return null;
+  } catch(_){
+    return null;
+  }
+}
 
 function currentProvider(){ return PROVIDERS[$('#provider').value]; }
 function setConn(state, detail){
@@ -1635,23 +1835,39 @@ videoStripEl.addEventListener('click', e => {
 
 /* ---------------- Core generation ---------------- */
 
-async function generateAll(doImg, doVid){
+async function generateAll(doImg, doVid, refIn){
   if(state.stop) return;
-  const ref = await uploadReferenceIfNeeded();
+  const ref = refIn || await uploadReferenceIfNeeded();
   state.stop = false;
-  $('#stopBtn').disabled = false;
+  const _stopEl = document.getElementById('stopBtn');
+  if(_stopEl) _stopEl.disabled = false;
   const total = state.scenes.length;
   for(let i=0; i<state.scenes.length; i++){
     if(state.stop) break;
     const s = state.scenes[i];
     progressEl.textContent = `Scene ${i+1}/${total}`;
-    if(doImg) await generateSceneImage(s, ref);
+    if(doImg){
+      await generateSceneImage(s, ref);
+      // Stop the pipeline if a scene hit a config error — no point retrying
+      if(s._configError){ state.stop = true; break; }
+    }
     if(state.stop) break;
-    if(doVid) await generateSceneVideo(s, ref);
+    if(doVid){
+      await generateSceneVideo(s, ref);
+      if(s._configError){ state.stop = true; break; }
+    }
   }
   progressEl.textContent = state.stop ? 'Stopped' : 'Done';
-  $('#stopBtn').disabled = true;
+  if(_stopEl) _stopEl.disabled = true;
   renderScenes(); renderGallery(); renderVideoStrip();
+}
+
+/* Configuration errors (key missing, plan upgrade needed, etc.) are
+   not transient. The provider layer raises these as Error objects with
+   `.friendly` and `.configError` properties; we bubble them up so the
+   pipeline can stop instead of auto-retrying. */
+function isConfigError(e){
+  return e && (e.configError === true || (e.friendly && e.friendly.length > 0));
 }
 
 async function generateSceneImage(s, refIn){
@@ -1659,18 +1875,20 @@ async function generateSceneImage(s, refIn){
     const ref = refIn || await uploadReferenceIfNeeded();
     const FACE_RETRIES = 3;
     const FACE_THRESH = parseFloat(localStorage.getItem('faceThreshold') || '0.62');
+    // Honor the new Setup-tab "lock face" checkbox
+    const useLock = FACE_LOCKED || ($('#faceLockChk')?.checked ?? true);
     for(let attempt = 1; attempt <= FACE_RETRIES; attempt++){
       try{
         s.imageStatus = "running"; s.faceStatus = "checking"; renderScenes();
         const p = currentProvider();
-        const style = $('#stylePrompt').value.trim();
+        const style = $('#stylePrompt')?.value?.trim() || '';
         const prompt = `${style}\n\nSCENE: ${s.title}\n${s.description}\n\nThe man's face must match the reference photo exactly. Same identity, same age, same skin tone, same features, same wardrobe.`;
         log(`Scene #${s.n} → image submit (attempt ${attempt}/${FACE_RETRIES})`);
         const sub = await p.submitImage({
           prompt, refUrl: ref,
-          aspect: $('#aspect').value,
-          quality: $('#quality').value,
-          model: $('#imgModel').value.trim() || p.imageModel,
+          aspect: $('#aspect')?.value || '16:9',
+          quality: $('#quality')?.value || '2K',
+          model: $('#imgModel')?.value?.trim() || p.imageModel,
         });
         const res = await pollUntilDone(p.pollImage, sub, `Scene #${s.n} image`);
         s.imageUrl = res.imageUrl;
@@ -1678,7 +1896,7 @@ async function generateSceneImage(s, refIn){
         setPreviewFromScene(s);
 
         // FACE INTEGRITY CHECK (only when face is locked)
-        if(!FACE_LOCKED){
+        if(!useLock){
           log(`Scene #${s.n} image done (face lock OFF — no integrity check)`);
           s.faceStatus = 'none'; s.imageStatus = "done";
           renderScenes(); renderGallery();
@@ -1710,7 +1928,15 @@ async function generateSceneImage(s, refIn){
       } catch(e){
         s.imageStatus = "failed";
         s.faceStatus = "drift";
-        log(`<err>Scene #${s.n} image: ${e.message}</err>`, "err");
+        if(isConfigError(e)){
+          // Config error: don't loop, don't try other scenes. Mark the scene
+          // so makeTrailer() can stop the pipeline and surface a banner.
+          s._configError = e.friendly || e.message;
+          log(`<err>Scene #${s.n} image: ${s._configError}</err>`, "err");
+          setBanner('bad', s._configError);
+        } else {
+          log(`<err>Scene #${s.n} image: ${e.message}</err>`, "err");
+        }
         renderScenes(); renderGallery();
         return;
       }
@@ -1728,8 +1954,8 @@ async function generateSceneVideo(s, refIn){
       const sub = await p.submitVideo({
         refUrl: ref,
         script: buildScriptForScene(s),
-        model: $('#vidModel').value.trim() || p.videoModel,
-        aspect: $('#aspect').value,
+        model: $('#vidModel')?.value?.trim() || p.videoModel,
+        aspect: $('#aspect')?.value || '16:9',
       });
       const res = await pollUntilDone(p.pollVideo, sub, `Scene #${s.n} video`);
       s.videoUrl = res.videoUrl;
@@ -1738,7 +1964,13 @@ async function generateSceneVideo(s, refIn){
       setPreviewFromScene(s);
     } catch(e){
       s.videoStatus = "failed";
-      log(`<err>Scene #${s.n} video: ${e.message}</err>`, "err");
+      if(isConfigError(e)){
+        s._configError = e.friendly || e.message;
+        log(`<err>Scene #${s.n} video: ${s._configError}</err>`, "err");
+        setBanner('bad', s._configError);
+      } else {
+        log(`<err>Scene #${s.n} video: ${e.message}</err>`, "err");
+      }
     }
     renderScenes(); renderVideoStrip();
   }
@@ -2410,6 +2642,35 @@ $('#provider').dispatchEvent(new Event('change'));
 $('#provider').addEventListener('change', () => probeProxy());
 // Run the initial probe so the pill tells the truth on page load.
 probeProxy();
+
+/* Update the Setup tab banner whenever the user changes the reference,
+   the script, or the face-lock checkbox. */
+function refreshSetupBanner(){
+  const hasRef = !!(REF_DATA_URL || REF_REMOTE_URL || $('#refUrl')?.value?.trim());
+  const hasScript = ($('#script')?.value || '').trim().length > 0;
+  const hasScenes = state.scenes.length > 0;
+  if(!hasRef){
+    setBanner('info', 'Step 1: drop a face photo to get started.');
+  } else if(!hasScript && !hasScenes){
+    setBanner('info', 'Step 2: write your script and click <b>Parse into scenes</b>.');
+  } else if(!hasScenes){
+    setBanner('info', 'Script looks good. Click <b>Parse into scenes</b> to break it into shots.');
+  } else {
+    setBanner('ok', `Ready. <b>${state.scenes.length}</b> scene(s) loaded. Hit <b>Make my trailer</b> when you\\'re set.`);
+  }
+}
+['#refUrl', '#script', '#faceLockChk'].forEach(s => {
+  const el = document.querySelector(s);
+  if(el) el.addEventListener('input', refreshSetupBanner);
+  if(el) el.addEventListener('change', refreshSetupBanner);
+});
+// Also re-render banner after parse / add scene / delete
+['#parseBtn', '#addSceneBtn'].forEach(s => {
+  const el = document.querySelector(s);
+  if(el) el.addEventListener('click', () => setTimeout(refreshSetupBanner, 50));
+});
+refreshSetupBanner();
+
 
 // Settings tab wiring
 const _saveBtn = document.getElementById('saveSettingsBtn');
