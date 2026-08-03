@@ -1510,23 +1510,39 @@ refWrap.addEventListener('drop', e => {
 /* FACE LOCK FLOW */
 let FACE_LOCKED = false;
 function enableLockBtn(){
-  const has = !!(REF_DATA_URL || REF_REMOTE_URL || $('#refUrl').value.trim());
-  $('#lockFaceBtn').disabled = !has || FACE_LOCKED;
+  const has = !!(REF_DATA_URL || REF_REMOTE_URL || $('#refUrl')?.value?.trim());
+  const btn = document.getElementById('lockFaceBtn');
+  if(btn) btn.disabled = !has || FACE_LOCKED;
 }
-$('#lockFaceBtn').addEventListener('click', () => {
-  FACE_LOCKED = true;
-  $('#lockFaceBtn').style.display = 'none';
-  $('#unlockFaceBtn').style.display = '';
-  $('#lockStatus').innerHTML = '<b style="color:var(--ok)">🔒 Face locked.</b> Every generated still will be auto-checked against this photo. Drift triggers a re-roll.';
-  log('Face locked — auto-integrity checks armed', 'ok');
-  renderScenes();
-});
-$('#unlockFaceBtn').addEventListener('click', () => {
-  FACE_LOCKED = false;
-  $('#lockFaceBtn').style.display = '';
-  $('#unlockFaceBtn').style.display = 'none';
-  $('#lockStatus').innerHTML = 'Upload or paste a face photo, then click <b>Lock this face</b>.';
-  log('Face unlocked', 'warn');
+// Legacy lock/unlock buttons from the old UI may not be in the DOM anymore
+// (the new Setup tab uses a checkbox). Null-safe.
+const _lockBtnEl = document.getElementById('lockFaceBtn');
+if(_lockBtnEl){
+  _lockBtnEl.addEventListener('click', () => {
+    FACE_LOCKED = true;
+    const lb = document.getElementById('lockFaceBtn');
+    const ub = document.getElementById('unlockFaceBtn');
+    if(lb) lb.style.display = 'none';
+    if(ub) ub.style.display = '';
+    const ls = document.getElementById('lockStatus');
+    if(ls) ls.innerHTML = '<b style="color:var(--ok)">🔒 Face locked.</b> Every generated still will be auto-checked against this photo. Drift triggers a re-roll.';
+    log('Face locked — auto-integrity checks armed', 'ok');
+    renderScenes();
+  });
+}
+const _unlockBtnEl = document.getElementById('unlockFaceBtn');
+if(_unlockBtnEl){
+  _unlockBtnEl.addEventListener('click', () => {
+    FACE_LOCKED = false;
+    const lb = document.getElementById('lockFaceBtn');
+    const ub = document.getElementById('unlockFaceBtn');
+    if(lb) lb.style.display = '';
+    if(ub) ub.style.display = 'none';
+    const ls = document.getElementById('lockStatus');
+    if(ls) ls.innerHTML = 'Upload or paste a face photo, then click <b>Lock this face</b>.';
+    log('Face unlocked', 'warn');
+  });
+}
   renderScenes();
 });
 $('#faceThreshold').addEventListener('input', e => {
@@ -2578,34 +2594,58 @@ function loadState(){
     if(!raw) return false;
     const p = JSON.parse(raw);
     if(!p || p.v !== 1) return false;
-    if(p.provider)    { $('#provider').value = p.provider; }
-    if(p.aspect)      { $('#aspect').value = p.aspect; }
-    if(p.quality)     { $('#quality').value = p.quality; }
-    if(p.stylePrompt) { $('#stylePrompt').value = p.stylePrompt; }
-    if(p.script)      { $('#script').value = p.script; }
-    if(p.endpoint)    { $('#endpoint').value = p.endpoint; }
-    if(p.vidModel)    { $('#vidModel').value = p.vidModel; }
-    if(p.imgModel)    { $('#imgModel').value = p.imgModel; }
-    if(p.refUrl)      { $('#refUrl').value = p.refUrl; }
-    if(p.refRemoteUrl){ REF_REMOTE_URL = p.refRemoteUrl; $('#refImg').src = REF_REMOTE_URL; $('#refImg').style.display='block'; $('#refEmpty').style.display='none'; }
+    // Helper: safely set value on an element if it exists
+    const setVal = (id, val) => { const el = document.getElementById(id); if(el && val != null) el.value = val; };
+    if(p.provider)    setVal('provider', p.provider);
+    if(p.aspect)      setVal('aspect', p.aspect);
+    if(p.quality)     setVal('quality', p.quality);
+    if(p.stylePrompt) setVal('stylePrompt', p.stylePrompt);
+    if(p.script)      setVal('script', p.script);
+    if(p.endpoint)    setVal('endpoint', p.endpoint);
+    if(p.vidModel)    setVal('vidModel', p.vidModel);
+    if(p.imgModel)    setVal('imgModel', p.imgModel);
+    if(p.refUrl)      setVal('refUrl', p.refUrl);
+    if(p.refRemoteUrl){
+      REF_REMOTE_URL = p.refRemoteUrl;
+      const img = document.getElementById('refImg');
+      const empty = document.getElementById('refEmpty');
+      if(img){ img.src = REF_REMOTE_URL; img.style.display = 'block'; }
+      if(empty) empty.style.display = 'none';
+    }
     if(p.faceLocked){
       FACE_LOCKED = true;
-      $('#lockFaceBtn').style.display = 'none';
-      $('#unlockFaceBtn').style.display = '';
-      $('#lockStatus').innerHTML = '<b style="color:var(--ok)">🔒 Face locked.</b> Every generated still will be auto-checked against this photo.';
+      // The new Setup tab uses a checkbox instead of separate buttons.
+      // Sync the checkbox and the (possibly absent) legacy buttons.
+      const chk = document.getElementById('faceLockChk');
+      if(chk) chk.checked = true;
+      const lockBtn = document.getElementById('lockFaceBtn');
+      const unlockBtn = document.getElementById('unlockFaceBtn');
+      if(lockBtn) lockBtn.style.display = 'none';
+      if(unlockBtn) unlockBtn.style.display = '';
+      const ls = document.getElementById('lockStatus');
+      if(ls) ls.innerHTML = '<b style="color:var(--ok)">🔒 Face locked.</b> Every generated still will be auto-checked against this photo.';
     }
-    if(p.faceThreshold){ $('#faceThreshold').value = p.faceThreshold; localStorage.setItem('faceThreshold', p.faceThreshold); }
-    enableLockBtn();
+    if(p.faceThreshold){
+      setVal('faceThreshold', p.faceThreshold);
+      try { localStorage.setItem('faceThreshold', p.faceThreshold); } catch{}
+    }
+    if(typeof enableLockBtn === 'function') enableLockBtn();
     if(Array.isArray(p.scenes) && p.scenes.length){
       state.scenes = p.scenes;
       renderScenes(); renderGallery(); renderVideoStrip();
       const on = state.scenes.length > 0;
-      $('#genAllBtn').disabled = !on;
-      $('#genImagesBtn').disabled = !on;
-      $('#genVideosBtn').disabled = !on;
+      // All buttons are optional; null-safe
+      ['genAllBtn','genImagesBtn','genVideosBtn'].forEach(id => {
+        const el = document.getElementById(id); if(el) el.disabled = !on;
+      });
+      const makeBtn = document.getElementById('makeTrailerBtn');
+      if(makeBtn) makeBtn.disabled = false;
     }
     return true;
-  } catch(e){ return false; }
+  } catch(e){
+    console.warn('loadState error:', e);
+    return false;
+  }
 }
 
 /* Hook every input that affects state */
