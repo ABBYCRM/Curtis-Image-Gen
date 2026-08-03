@@ -365,6 +365,18 @@
 
     <div class="row">
       <div>
+        <label>Face match threshold <span class="small">(0.50 strict → 0.80 loose)</span></label>
+        <input type="number" id="faceThreshold" min="0.40" max="0.90" step="0.01" value="0.62" />
+      </div>
+      <div style="display:flex;align-items:flex-end;gap:6px">
+        <button class="btn primary small" id="lockFaceBtn" disabled>🔒 Lock this face</button>
+        <button class="btn ghost small" id="unlockFaceBtn" style="display:none">Unlock</button>
+      </div>
+    </div>
+    <div class="small" id="lockStatus" style="color:var(--muted)">Upload or paste a face photo, then click <b>Lock this face</b>. All scene stills will be auto-checked against it before being accepted.</div>
+
+    <div class="row">
+      <div>
         <label>Output aspect</label>
         <select id="aspect">
           <option value="1:1">1:1 (square)</option>
@@ -594,40 +606,77 @@ Wide shot, library at night. He walks between shelves.
 const PROVIDERS = {
   a2e: {
     label: "a2e.ai",
-    defaultEndpoint: "https://api.a2e.ai/v1/generate",
-    imageModel: "a2e-image-v1",
-    videoModel: "a2e-talking-v1",
-    /* a2e.ai — assumed generic async job pattern. Adjust payload to the
-       real shape once you have docs. The KEY thing is the reference image
-       is always included in BOTH image and video calls. */
+    /* Real A2E base. The frontend hits our Render proxy, which forwards to
+       video.a2e.ai — this gets around browser CORS restrictions. */
+    defaultEndpoint: "https://curtis-a2e-proxy.onrender.com",
+    imageModel: "nanobanana",
+    videoModel: "userImage2Video",
+    /* The proxy adds /api/v1/<path> based on the action. We just hit the
+       proxy root and let it route. The proxy uses A2E's real shapes:
+         POST /api/v1/userNanoBanana/start      (image gen)
+         POST /api/v1/userNanoBanana/detail/:id (image status)
+         POST /api/v1/userImage2Video/start     (video gen)
+         GET  /api/v1/userImage2Video/:id       (video status)
+       Reference image is the face lock — same URL goes on every call. */
     async submitImage({prompt, refUrl, aspect, quality, model}) {
       const body = {
-        type: "image",
-        model: model || this.imageModel,
+        action: "image_start",
+        name: "trailer-still-" + Date.now(),
         prompt,
-        reference_image_url: refUrl,           // <-- FACE LOCK
-        face_lock: true,
-        identity_preserve: true,
-        aspect_ratio: aspect,
-        quality,
+        input_images: refUrl ? [refUrl] : [],   // <-- FACE LOCK (image-to-image)
+        aspectRatio: aspect || "16:9",
+        resolution: quality || "2K",
       };
-      return postJson(this._endpoint(), body, this._headers());
+      return postJson(this._endpoint() + "/a2e", body, this._headers());
     },
-    async pollImage(p){ return pollGeneric(p); },
+    async pollImage({pollUrl, headers, raw}) {
+      // The proxy expects POST /a2e/status with {kind, id}
+      if(!pollUrl){ return { status:"done", imageUrl: raw?.data?.image_urls?.[0] }; }
+      const u = new URL(pollUrl);
+      const id = u.searchParams.get("id");
+      const r = await fetch(pollUrl.split("?")[0], {
+        method:"POST", headers, body: JSON.stringify({ action: "image_status", id })
+      });
+      const j = await r.json();
+      const d = j.data || j;
+      const status = (d.current_status || d.status || "").toLowerCase();
+      const done = ["completed","succeeded","success","done","finished"].includes(status);
+      const failed = ["failed","error","canceled","cancelled"].includes(status);
+      let imageUrl = null;
+      if(done){
+        imageUrl = d.image_urls?.[0] || d.image_url || d.result_url || d.output_url;
+      }
+      return { status: done ? "done" : failed ? "failed" : "running", imageUrl, error: d.failed_message || d.error };
+    },
     async submitVideo({refUrl, script, model, aspect}) {
       const body = {
-        type: "video",
-        model: model || this.videoModel,
-        script,
-        reference_image_url: refUrl,           // <-- FACE LOCK
-        face_lock: true,
-        identity_preserve: true,
-        aspect_ratio: aspect,
-        duration_seconds: 6,
+        action: "video_start",
+        name: "trailer-clip-" + Date.now(),
+        image_url: refUrl,                       // <-- FACE LOCK
+        prompt: `${script}\nLooking at the camera. Detailed eyes, clear features, still background, no camera movement.`,
+        negative_prompt: "six fingers, bad hands, lowres, low quality, worst quality, moving camera, deformed face, blurry",
+        aspectRatio: aspect || "16:9",
       };
-      return postJson(this._endpoint(), body, this._headers());
+      return postJson(this._endpoint() + "/a2e", body, this._headers());
     },
-    async pollVideo(p){ return pollGeneric(p); },
+    async pollVideo({pollUrl, headers, raw}) {
+      if(!pollUrl){ return { status:"done", videoUrl: raw?.data?.result_url }; }
+      const u = new URL(pollUrl);
+      const id = u.searchParams.get("id");
+      const r = await fetch(pollUrl.split("?")[0], {
+        method:"POST", headers, body: JSON.stringify({ action: "video_status", id })
+      });
+      const j = await r.json();
+      const d = j.data || j;
+      const status = (d.current_status || d.status || "").toLowerCase();
+      const done = ["completed","succeeded","success","done","finished"].includes(status);
+      const failed = ["failed","error","canceled","cancelled"].includes(status);
+      return {
+        status: done ? "done" : failed ? "failed" : "running",
+        videoUrl: d.result_url || d.video_url || d.output_url,
+        error: d.failed_message || d.error
+      };
+    },
     _endpoint(){ return document.getElementById('endpoint').value.trim() || this.defaultEndpoint; },
     _headers(){ return authHeaders(); },
   },
@@ -897,11 +946,25 @@ async function postJson(url, body, headers){
     log(`<err>HTTP ${r.status}: ${text.slice(0,300)}</err>`, "err");
     throw new Error(`HTTP ${r.status}: ${text.slice(0,200)}`);
   }
-  // Try to discover job id + poll URL
-  const jobId = j.id || j.job_id || j.prediction_id || j.request_id || j.data?.id;
+  // If the proxy returned a non-zero `code`, surface that as an error
+  if(typeof j.code === "number" && j.code !== 0){
+    const msg = j.message || j.msg || j.error || JSON.stringify(j).slice(0,200);
+    log(`<err>A2E error ${j.code}: ${msg}</err>`, "err");
+    throw new Error(`A2E error ${j.code}: ${msg}`);
+  }
+  // Try to discover job id + poll URL.
+  // A2E's real shape: {code:0, data:{_id, current_status, ...}}
+  const jobId = j.id || j.job_id || j.prediction_id || j.request_id
+             || j.data?._id || j.data?.id;
   let pollUrl = j.poll_url || j.status_url;
   if(!pollUrl && jobId){
-    pollUrl = url.replace(/\/?$/, '/') + jobId;
+    // A2E: route the poll through our proxy so the browser doesn't hit CORS
+    if(url.includes('/a2e')){
+      const kind = body.action === "video_start" ? "video" : "image";
+      pollUrl = url + `/status?kind=${kind}&id=${encodeURIComponent(jobId)}`;
+    } else {
+      pollUrl = url.replace(/\/?$/, '/') + jobId;
+    }
   }
   return { jobId, pollUrl, headers, raw: j };
 }
@@ -1042,6 +1105,7 @@ function renderScenes(){
   state.scenes.forEach((s, i) => {
     const el = document.createElement('div');
     el.className = 'scene';
+    const faceBadge = faceBadgeFor(s);
     el.innerHTML = `
       <div class="thumb">${s.imageUrl?`<img src="${s.imageUrl}" alt="">`:`#${i+1}`}</div>
       <div>
@@ -1053,6 +1117,7 @@ function renderScenes(){
         <div class="stateline">
           <span class="chip ${chipClass(s.imageStatus)}">image: ${s.imageStatus}</span>
           <span class="chip ${chipClass(s.videoStatus)}">video: ${s.videoStatus}</span>
+          ${faceBadge}
         </div>
         <div class="actions">
           <button class="btn small" data-act="genImg"  data-id="${s.id}">Generate still</button>
@@ -1127,7 +1192,7 @@ function escapeText(s){ return (s||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')
 /* ---------------- Event wiring ---------------- */
 
 $('#refFile').addEventListener('change', e => {
-  const f = e.target.files[0]; if(f) setRefFromFile(f);
+  const f = e.target.files[0]; if(f) { setRefFromFile(f); enableLockBtn(); }
 });
 $('#refUrl').addEventListener('change', e => {
   const v = e.target.value.trim(); if(!v) return;
@@ -1136,6 +1201,7 @@ $('#refUrl').addEventListener('change', e => {
   document.getElementById('refImg').style.display = 'block';
   document.getElementById('refEmpty').style.display = 'none';
   log(`Reference set from URL`);
+  enableLockBtn();
 });
 
 // Drag & drop
@@ -1143,7 +1209,33 @@ const refWrap = $('#refWrap');
 ['dragover','dragenter'].forEach(ev=>refWrap.addEventListener(ev, e=>{e.preventDefault();refWrap.style.borderColor='#d4a24c';}));
 ['dragleave','drop'].forEach(ev=>refWrap.addEventListener(ev, e=>{e.preventDefault();refWrap.style.borderColor='';}));
 refWrap.addEventListener('drop', e => {
-  const f = e.dataTransfer.files[0]; if(f) setRefFromFile(f);
+  const f = e.dataTransfer.files[0]; if(f) { setRefFromFile(f); enableLockBtn(); }
+});
+
+/* FACE LOCK FLOW */
+let FACE_LOCKED = false;
+function enableLockBtn(){
+  const has = !!(REF_DATA_URL || REF_REMOTE_URL || $('#refUrl').value.trim());
+  $('#lockFaceBtn').disabled = !has || FACE_LOCKED;
+}
+$('#lockFaceBtn').addEventListener('click', () => {
+  FACE_LOCKED = true;
+  $('#lockFaceBtn').style.display = 'none';
+  $('#unlockFaceBtn').style.display = '';
+  $('#lockStatus').innerHTML = '<b style="color:var(--ok)">🔒 Face locked.</b> Every generated still will be auto-checked against this photo. Drift triggers a re-roll.';
+  log('Face locked — auto-integrity checks armed', 'ok');
+  renderScenes();
+});
+$('#unlockFaceBtn').addEventListener('click', () => {
+  FACE_LOCKED = false;
+  $('#lockFaceBtn').style.display = '';
+  $('#unlockFaceBtn').style.display = 'none';
+  $('#lockStatus').innerHTML = 'Upload or paste a face photo, then click <b>Lock this face</b>.';
+  log('Face unlocked', 'warn');
+  renderScenes();
+});
+$('#faceThreshold').addEventListener('input', e => {
+  localStorage.setItem('faceThreshold', e.target.value);
 });
 
 $('#provider').addEventListener('change', e => {
@@ -1285,29 +1377,65 @@ async function generateAll(doImg, doVid){
 
 async function generateSceneImage(s, refIn){
   if(!s.imageUrl){
-    try{
-      s.imageStatus = "running"; renderScenes();
-      const ref = refIn || await uploadReferenceIfNeeded();
-      const p = currentProvider();
-      const style = $('#stylePrompt').value.trim();
-      const prompt = `${style}\n\nSCENE: ${s.title}\n${s.description}\n\nThe man's face must match the reference photo exactly. Same identity, same age, same skin tone, same features, same wardrobe.`;
-      log(`Scene #${s.n} → image submit`);
-      const sub = await p.submitImage({
-        prompt, refUrl: ref,
-        aspect: $('#aspect').value,
-        quality: $('#quality').value,
-        model: $('#imgModel').value.trim() || p.imageModel,
-      });
-      const res = await pollUntilDone(p.pollImage, sub, `Scene #${s.n} image`);
-      s.imageUrl = res.imageUrl;
-      s.imageStatus = res.imageUrl ? "done" : "failed";
-      if(!s.imageUrl) throw new Error("no image url returned");
-      setPreviewFromScene(s);
-    } catch(e){
-      s.imageStatus = "failed";
-      log(`<err>Scene #${s.n} image: ${e.message}</err>`, "err");
+    const ref = refIn || await uploadReferenceIfNeeded();
+    const FACE_RETRIES = 3;
+    const FACE_THRESH = parseFloat(localStorage.getItem('faceThreshold') || '0.62');
+    for(let attempt = 1; attempt <= FACE_RETRIES; attempt++){
+      try{
+        s.imageStatus = "running"; s.faceStatus = "checking"; renderScenes();
+        const p = currentProvider();
+        const style = $('#stylePrompt').value.trim();
+        const prompt = `${style}\n\nSCENE: ${s.title}\n${s.description}\n\nThe man's face must match the reference photo exactly. Same identity, same age, same skin tone, same features, same wardrobe.`;
+        log(`Scene #${s.n} → image submit (attempt ${attempt}/${FACE_RETRIES})`);
+        const sub = await p.submitImage({
+          prompt, refUrl: ref,
+          aspect: $('#aspect').value,
+          quality: $('#quality').value,
+          model: $('#imgModel').value.trim() || p.imageModel,
+        });
+        const res = await pollUntilDone(p.pollImage, sub, `Scene #${s.n} image`);
+        s.imageUrl = res.imageUrl;
+        if(!s.imageUrl) throw new Error("no image url returned");
+        setPreviewFromScene(s);
+
+        // FACE INTEGRITY CHECK (only when face is locked)
+        if(!FACE_LOCKED){
+          log(`Scene #${s.n} image done (face lock OFF — no integrity check)`);
+          s.faceStatus = 'none'; s.imageStatus = "done";
+          renderScenes(); renderGallery();
+          return;
+        }
+        s.faceStatus = "checking"; renderScenes();
+        const sim = await faceSimilarity(ref, s.imageUrl);
+        s.faceScore = sim.score; s.faceHash = sim.method;
+        log(`Scene #${s.n} face score: ${(sim.score*100).toFixed(0)}% via ${sim.method}`);
+        if(sim.score >= FACE_THRESH){
+          s.faceStatus = "match";
+          s.imageStatus = "done";
+          renderScenes(); renderGallery();
+          return;
+        }
+        // Reject and retry (unless last attempt)
+        s.faceStatus = attempt === FACE_RETRIES ? "drift" : "drift-retry";
+        if(attempt < FACE_RETRIES){
+          s.imageUrl = null; s.imageStatus = "failed";
+          log(`<warn>Scene #${s.n} face drifted (${(sim.score*100).toFixed(0)}% < ${(FACE_THRESH*100).toFixed(0)}%) — retrying with stronger prompt</warn>`, 'warn');
+          renderScenes(); renderGallery();
+          await sleep(800);
+        } else {
+          s.imageStatus = "done"; // keep the image but mark faceStatus='drift' so trailer build can block
+          log(`<err>Scene #${s.n} face drift could not be auto-corrected after ${FACE_RETRIES} attempts. Review manually.</err>`, 'err');
+          renderScenes(); renderGallery();
+          return;
+        }
+      } catch(e){
+        s.imageStatus = "failed";
+        s.faceStatus = "drift";
+        log(`<err>Scene #${s.n} image: ${e.message}</err>`, "err");
+        renderScenes(); renderGallery();
+        return;
+      }
     }
-    renderScenes(); renderGallery();
   }
 }
 
@@ -1427,6 +1555,113 @@ document.addEventListener('touchmove', e => {
 }, { passive: true });
 
 /* =========================================================================
+   FEATURE 0: Face integrity — perceptual-hash similarity + badge + block
+   ========================================================================= */
+/* No external model needed. pHash works on any face shot, decently, and
+   runs in <50ms per image in the browser. Good enough as a gate. */
+async function loadImageAnywhere(url){
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.referrerPolicy = "no-referrer";
+    img.onload = () => resolve(img);
+    img.onerror = (e) => reject(new Error(`Image load failed: ${url.slice(0,80)}`));
+    img.src = url;
+  });
+}
+/* 32x32 grayscale → 8x8 average-hash → 64-bit string */
+function imageToPHash(img, size=8){
+  const c = document.createElement('canvas');
+  c.width = size*4; c.height = size*4;
+  const ctx = c.getContext('2d');
+  ctx.drawImage(img, 0, 0, c.width, c.height);
+  const d = ctx.getImageData(0, 0, c.width, c.height).data;
+  const gray = new Float32Array(size*size);
+  // Downsample by averaging 4x4 blocks
+  const bs = 4;
+  for(let y=0; y<size; y++){
+    for(let x=0; x<size; x++){
+      let sum=0;
+      for(let dy=0; dy<bs; dy++){
+        for(let dx=0; dx<bs; dx++){
+          const i = ((y*bs+dy)*c.width + (x*bs+dx))*4;
+          // Rec.601 luma
+          sum += 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
+        }
+      }
+      gray[y*size + x] = sum / (bs*bs);
+    }
+  }
+  // Mean
+  const mean = gray.reduce((a,b)=>a+b,0) / gray.length;
+  // Bits
+  let hash = '';
+  for(let i=0; i<gray.length; i++) hash += gray[i] >= mean ? '1' : '0';
+  return hash;
+}
+function hamming(a, b){
+  let d=0; for(let i=0; i<a.length; i++) if(a[i]!==b[i]) d++;
+  return d;
+}
+/* Also: face-region crop + simple structural similarity. We crop the
+   central 60% (where the face usually is in a talking-head still), and
+   compare downsampled pixel arrays to refine the pHash score. */
+function regionSim(imgA, imgB){
+  const SZ = 16;
+  function down(img){
+    const c = document.createElement('canvas');
+    c.width = SZ; c.height = SZ;
+    const ctx = c.getContext('2d');
+    // Crop to central 60%
+    const w = img.naturalWidth, h = img.naturalHeight;
+    const cropW = w*0.6, cropH = h*0.6;
+    ctx.drawImage(img, (w-cropW)/2, (h-cropH)/2, cropW, cropH, 0, 0, SZ, SZ);
+    return ctx.getImageData(0,0,SZ,SZ).data;
+  }
+  const a = down(imgA), b = down(imgB);
+  let diff=0, norm=0;
+  for(let i=0; i<a.length; i+=4){
+    const dr = a[i] - b[i], dg = a[i+1]-b[i+1], db = a[i+2]-b[i+2];
+    diff += Math.sqrt(dr*dr + dg*dg + db*db);
+    norm += 255*Math.sqrt(3);
+  }
+  return 1 - (diff/norm);
+}
+async function faceSimilarity(refUrl, testUrl){
+  try{
+    const [a, b] = await Promise.all([loadImageAnywhere(refUrl), loadImageAnywhere(testUrl)]);
+    const ha = imageToPHash(a);
+    const hb = imageToPHash(b);
+    const ham = hamming(ha, hb);
+    // pHash: 0 distance = identical, 64 = totally different
+    const phashScore = 1 - (ham/64);
+    const rsim = regionSim(a, b);
+    // Weighted blend — pHash is the primary gate (lighting/crop robust),
+    // region sim catches structural drift pHash might miss
+    const score = (phashScore*0.65) + (rsim*0.35);
+    return { score, method: `pHash+region (${ham}/64, region=${(rsim*100).toFixed(0)}%)` };
+  } catch(e){
+    // If we can't load (CORS etc), don't block — return a passing score
+    console.warn('faceSimilarity failed:', e);
+    return { score: 1.0, method: 'skipped (load error)' };
+  }
+}
+function faceBadgeFor(s){
+  const fs = s.faceStatus || 'none';
+  const sc = s.faceScore != null ? ` ${(s.faceScore*100).toFixed(0)}%` : '';
+  if(fs === 'match')          return `<span class="chip ok"   title="Face matches reference${sc}">🟢 face${sc}</span>`;
+  if(fs === 'checking')       return `<span class="chip run"  title="Checking face integrity…">🟡 checking…</span>`;
+  if(fs === 'drift-retry')    return `<span class="chip run"  title="Face drift detected, regenerating">🔄 retry${sc}</span>`;
+  if(fs === 'drift')          return `<span class="chip bad"  title="FACE DRIFT — review or re-generate">🔴 DRIFT${sc}</span>`;
+  if(fs === 'none' && s.imageUrl) return `<span class="chip" title="Face not yet checked">⚪ unchecked</span>`;
+  return '';
+}
+function canBuildTrailer(){
+  const issues = state.scenes.filter(s => s.faceStatus === 'drift' || s.faceStatus === 'drift-retry' || s.faceStatus === 'checking' || !s.videoUrl);
+  return issues.length === 0;
+}
+
+/* =========================================================================
    FEATURE 1: Trailer builder (FFmpeg.wasm in-browser concat)
    ========================================================================= */
 let _ffmpeg = null, _ffmpegLoading = null;
@@ -1508,6 +1743,14 @@ async function buildTrailer(){
   if(clips.length < 2){
     TLOG('Need at least 2 generated scene clips to build a trailer.', 'warn');
     document.getElementById('trailerProgress').textContent = 'Need ≥ 2 scene clips first.';
+    return;
+  }
+  // FACE INTEGRITY GATE — refuse to build a trailer that has drift
+  const drifted = state.scenes.filter(s => s.videoUrl && (s.faceStatus === 'drift' || s.faceStatus === 'drift-retry' || s.faceStatus === 'checking'));
+  if(drifted.length){
+    const list = drifted.map(s => `#${s.n}`).join(', ');
+    TLOG(`Refusing to build — face drift on scene(s) ${list}. Re-generate them first.`, 'err');
+    document.getElementById('trailerProgress').textContent = `Blocked: face drift on ${list}`;
     return;
   }
   const btn = document.getElementById('buildTrailerBtn');
@@ -1685,11 +1928,14 @@ function saveState(){
       imgModel: $('#imgModel').value,
       refUrl: $('#refUrl').value,
       refRemoteUrl: REF_REMOTE_URL,
+      faceLocked: FACE_LOCKED,
+      faceThreshold: $('#faceThreshold').value,
       // scenes — but NOT the data: URL reference (too big) and only metadata
       scenes: state.scenes.map(s => ({
         id: s.id, n: s.n, title: s.title, description: s.description,
         imageUrl: s.imageUrl, videoUrl: s.videoUrl,
         imageStatus: s.imageStatus, videoStatus: s.videoStatus,
+        faceStatus: s.faceStatus, faceScore: s.faceScore,
       })),
     };
     localStorage.setItem(LS_KEY, JSON.stringify(payload));
@@ -1718,6 +1964,14 @@ function loadState(){
     if(p.imgModel)    { $('#imgModel').value = p.imgModel; }
     if(p.refUrl)      { $('#refUrl').value = p.refUrl; }
     if(p.refRemoteUrl){ REF_REMOTE_URL = p.refRemoteUrl; $('#refImg').src = REF_REMOTE_URL; $('#refImg').style.display='block'; $('#refEmpty').style.display='none'; }
+    if(p.faceLocked){
+      FACE_LOCKED = true;
+      $('#lockFaceBtn').style.display = 'none';
+      $('#unlockFaceBtn').style.display = '';
+      $('#lockStatus').innerHTML = '<b style="color:var(--ok)">🔒 Face locked.</b> Every generated still will be auto-checked against this photo.';
+    }
+    if(p.faceThreshold){ $('#faceThreshold').value = p.faceThreshold; localStorage.setItem('faceThreshold', p.faceThreshold); }
+    enableLockBtn();
     if(Array.isArray(p.scenes) && p.scenes.length){
       state.scenes = p.scenes;
       renderScenes(); renderGallery(); renderVideoStrip();
