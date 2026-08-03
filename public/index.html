@@ -946,8 +946,9 @@ async function postJson(url, body, headers){
     log(`<err>HTTP ${r.status}: ${text.slice(0,300)}</err>`, "err");
     throw new Error(`HTTP ${r.status}: ${text.slice(0,200)}`);
   }
-  // If the proxy returned a non-zero `code`, surface that as an error
-  if(typeof j.code === "number" && j.code !== 0){
+  // If the A2E proxy returned a non-zero `code`, surface that as an error.
+  // Only check for A2E — other providers don't use a `code` envelope.
+  if(url.includes('/a2e') && typeof j.code === "number" && j.code !== 0){
     const msg = j.message || j.msg || j.error || JSON.stringify(j).slice(0,200);
     log(`<err>A2E error ${j.code}: ${msg}</err>`, "err");
     throw new Error(`A2E error ${j.code}: ${msg}`);
@@ -1628,22 +1629,40 @@ function regionSim(imgA, imgB){
   return 1 - (diff/norm);
 }
 async function faceSimilarity(refUrl, testUrl){
+  // Try to load both images with CORS. If the test image is blocked by
+  // CORS, fall back to fetching it via a no-cors Image element and reading
+  // the pixel buffer via a tainted-but-readable canvas. As a last resort,
+  // refuse to pass silently — return score:0 and let the gate block.
+  async function loadOne(url){
+    // 1) Standard CORS-enabled load
+    try { return await loadImageAnywhere(url); } catch(_){}
+    // 2) No-cors fallback (image will load but canvas will be tainted)
+    return await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.referrerPolicy = "no-referrer";
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('image load failed (CORS)'));
+      img.src = url;
+    });
+  }
   try{
-    const [a, b] = await Promise.all([loadImageAnywhere(refUrl), loadImageAnywhere(testUrl)]);
+    const [a, b] = await Promise.all([loadOne(refUrl), loadOne(testUrl)]);
     const ha = imageToPHash(a);
     const hb = imageToPHash(b);
     const ham = hamming(ha, hb);
-    // pHash: 0 distance = identical, 64 = totally different
     const phashScore = 1 - (ham/64);
-    const rsim = regionSim(a, b);
-    // Weighted blend — pHash is the primary gate (lighting/crop robust),
-    // region sim catches structural drift pHash might miss
+    let rsim;
+    try { rsim = regionSim(a, b); } catch(_){
+      // Canvas was tainted — fall back to pHash only
+      return { score: phashScore, method: `pHash-only (${ham}/64, region blocked by CORS)` };
+    }
     const score = (phashScore*0.65) + (rsim*0.35);
     return { score, method: `pHash+region (${ham}/64, region=${(rsim*100).toFixed(0)}%)` };
   } catch(e){
-    // If we can't load (CORS etc), don't block — return a passing score
-    console.warn('faceSimilarity failed:', e);
-    return { score: 1.0, method: 'skipped (load error)' };
+    // If we truly can't load either image, FAIL the gate — better to
+    // force a manual review than to silently approve an unchecked still.
+    return { score: 0, method: `failed: ${(e.message||e).toString().slice(0,80)}` };
   }
 }
 function faceBadgeFor(s){
@@ -1748,8 +1767,8 @@ async function buildTrailer(){
   // FACE INTEGRITY GATE — refuse to build a trailer that has drift
   const drifted = state.scenes.filter(s => s.videoUrl && (s.faceStatus === 'drift' || s.faceStatus === 'drift-retry' || s.faceStatus === 'checking'));
   if(drifted.length){
-    const list = drifted.map(s => `#${s.n}`).join(', ');
-    TLOG(`Refusing to build — face drift on scene(s) ${list}. Re-generate them first.`, 'err');
+    const list = drifted.map(s => `#${s.n} (${s.faceStatus})`).join(', ');
+    TLOG(`Refusing to build — face drift on scene(s): ${list}. Open the Scenes tab and click "Generate still" again on the drifted scenes to retry.`, 'err');
     document.getElementById('trailerProgress').textContent = `Blocked: face drift on ${list}`;
     return;
   }
@@ -1992,9 +2011,6 @@ function loadState(){
   }, true);
 });
 /* Save when scenes change too */
-const _origRender = renderScenes;
-window._patchedRender = true; // no-op marker
-/* Patch the state-modifying spots by wrapping common events */
 ['#parseBtn','#addSceneBtn','#testBtn','#clearKeyBtn','#exportBtn','#importBtn'].forEach(sel => {
   const el = document.querySelector(sel);
   if(!el) return;
@@ -2010,8 +2026,10 @@ if(_scenesEl){
 }
 
 /* ---------------- Init ---------------- */
-$('#provider').dispatchEvent(new Event('change'));
+// Restore from localStorage FIRST so its values (endpoint, model, etc.)
+// don't get clobbered by the provider change handler that fills defaults.
 const restored = loadState();
+$('#provider').dispatchEvent(new Event('change'));
 log(restored
   ? `Restored ${state.scenes.length} scene(s) from local storage.`
   : 'Ready. Upload a face reference, paste your A2E API key, then write a script.');
