@@ -7,192 +7,339 @@
 <style>
   :root{
     --bg:#0b0d12;
+    --bg-grad: radial-gradient(1200px 600px at 80% -10%, rgba(212,162,76,.08), transparent 60%),
+                radial-gradient(900px 500px at 0% 100%, rgba(124,92,255,.06), transparent 60%),
+                linear-gradient(180deg, #0b0d12, #0a0c11);
     --panel:#141821;
     --panel2:#1b2030;
     --line:#262b3a;
+    --line-soft:#1d2230;
     --text:#e7eaf3;
     --muted:#8a93a8;
     --accent:#d4a24c;       /* warm gold, matches the reference photo */
+    --accent-soft: rgba(212,162,76,.18);
     --accent2:#7c5cff;
     --ok:#46d39a;
     --warn:#ffb454;
     --bad:#ff6b6b;
     --chip:#222838;
+
+    /* iOS safe areas */
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
   }
   *{box-sizing:border-box}
-  html,body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif}
+  *::-webkit-scrollbar{width:6px;height:6px}
+  *::-webkit-scrollbar-thumb{background:#2a3045;border-radius:3px}
+  *::-webkit-scrollbar-track{background:transparent}
+  html,body{
+    margin:0;background:var(--bg-grad);color:var(--text);
+    font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    -webkit-tap-highlight-color:transparent;
+    overscroll-behavior-y: contain;
+  }
   a{color:var(--accent)}
+  button{font-family:inherit}
+
+  /* ---------- Header ---------- */
   header{
-    padding:18px 22px;border-bottom:1px solid var(--line);
-    display:flex;align-items:center;gap:14px;background:linear-gradient(180deg,#10131c,#0b0d12);
+    position:sticky; top:0; z-index:50;
+    padding:calc(10px + var(--safe-top)) 16px 10px;
+    border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:12px;
+    background:linear-gradient(180deg, rgba(16,19,28,.92), rgba(11,13,18,.86));
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
   }
   header .logo{
-    width:34px;height:34px;border-radius:9px;
+    width:36px;height:36px;border-radius:10px;flex:0 0 36px;
     background:radial-gradient(circle at 30% 30%,#f3c876,#a8772a 70%,#5a3d12);
     box-shadow:0 0 0 1px #000 inset, 0 6px 20px rgba(212,162,76,.25);
   }
-  header h1{font-size:16px;margin:0;letter-spacing:.3px}
-  header .sub{color:var(--muted);font-size:12px}
-  header .right{margin-left:auto;display:flex;gap:10px;align-items:center}
-  .pill{font-size:11px;padding:4px 9px;border:1px solid var(--line);border-radius:999px;color:var(--muted);background:#0f1320}
+  header .titles{min-width:0;flex:1 1 auto}
+  header h1{font-size:15px;margin:0;letter-spacing:.3px;line-height:1.1}
+  header .sub{color:var(--muted);font-size:11px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  header .right{display:flex;gap:6px;align-items:center;flex:0 0 auto}
+  .pill{font-size:10px;padding:3px 7px;border:1px solid var(--line);border-radius:999px;color:var(--muted);background:#0f1320;white-space:nowrap}
   .pill.ok{color:var(--ok);border-color:#1f3a2e}
   .pill.bad{color:var(--bad);border-color:#3a1f1f}
+  .pill.hide-narrow{display:none}
 
+  /* ---------- Layout shell (mobile uses tabs) ---------- */
   main{
-    display:grid;grid-template-columns: 380px 1fr 380px; gap:14px; padding:14px;
+    padding:12px 12px calc(96px + var(--safe-bottom));
     min-height: calc(100vh - 65px);
   }
-  @media (max-width: 1180px){ main{grid-template-columns: 1fr;} }
+  .panels{
+    display:grid;grid-template-columns: 380px 1fr 380px; gap:14px;
+  }
+  .panels > [data-tab]{ display:flex; flex-direction:column; min-width:0; }
 
+  /* ---------- Panel ---------- */
   .panel{
-    background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    background:linear-gradient(180deg, var(--panel), #11141c);
+    border:1px solid var(--line); border-radius:16px;
     padding:14px; display:flex; flex-direction:column; gap:12px; min-width:0;
+    box-shadow: 0 1px 0 rgba(255,255,255,.02) inset, 0 6px 24px rgba(0,0,0,.25);
   }
-  .panel h2{margin:0;font-size:13px;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);font-weight:600}
-  .panel .hint{color:var(--muted);font-size:12px}
+  .panel h2{margin:0;font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);font-weight:700}
+  .panel .hint{color:var(--muted);font-size:12.5px;line-height:1.5}
 
-  label{font-size:12px;color:var(--muted);display:block;margin-bottom:6px}
-  input[type=text], input[type=password], input[type=url], select, textarea{
+  /* ---------- Form controls ---------- */
+  label{font-size:12px;color:var(--muted);display:block;margin-bottom:6px;font-weight:500}
+  input[type=text], input[type=password], input[type=url], input[type=file], select, textarea{
     width:100%; background:#0d1018; color:var(--text);
-    border:1px solid var(--line); border-radius:9px; padding:9px 11px;
-    font:13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    border:1px solid var(--line); border-radius:10px; padding:12px 13px;
+    font:16px/1.4 -apple-system,BlinkMacSystemFont,Inter,Roboto,Helvetica,Arial,sans-serif; /* 16px stops iOS zoom */
     outline:none;
+    transition: border-color .15s, background .15s;
+    -webkit-appearance:none; appearance:none;
   }
-  input:focus, select:focus, textarea:focus{border-color:#3a4258}
-  textarea{min-height:90px; resize:vertical}
+  select{
+    background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+                      linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+    background-position: calc(100% - 18px) 50%, calc(100% - 13px) 50%;
+    background-size: 5px 5px, 5px 5px;
+    background-repeat: no-repeat;
+    padding-right: 34px;
+  }
+  input[type=file]{
+    padding:10px;
+    font-size:14px;
+  }
+  input[type=file]::file-selector-button{
+    background:linear-gradient(180deg,#2a3147,#1b2135);
+    color:var(--text); border:1px solid #36405c; border-radius:8px;
+    padding:6px 10px; font-size:13px; font-weight:600;
+    margin-right:10px; cursor:pointer;
+  }
+  input:focus, select:focus, textarea:focus{border-color:#4b557a; background:#0f1320}
+  textarea{min-height:96px; resize:vertical}
   .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+
   .btn{
     background:linear-gradient(180deg,#2a3147,#1b2135);
-    color:var(--text); border:1px solid #36405c; border-radius:9px;
-    padding:9px 12px; font-weight:600; cursor:pointer; font-size:13px;
+    color:var(--text); border:1px solid #36405c; border-radius:11px;
+    padding:13px 14px; font-weight:600; cursor:pointer; font-size:14px;
+    min-height:46px; /* touch target */
+    display:inline-flex; align-items:center; justify-content:center; gap:6px;
+    transition: transform .08s ease, border-color .15s, background .15s;
   }
+  .btn:active{ transform: scale(.98); }
   .btn:hover{border-color:#4b557a}
   .btn.primary{
     background:linear-gradient(180deg,#e9b25c,#a8772a);
     color:#1a1300; border-color:#a8772a;
+    box-shadow: 0 6px 18px rgba(212,162,76,.25);
   }
   .btn.primary:hover{filter:brightness(1.05)}
   .btn.ghost{background:transparent}
   .btn.danger{background:#2a1418;border-color:#5a242a;color:#ffb0b0}
-  .btn.small{padding:6px 9px;font-size:12px}
+  .btn.small{padding:9px 11px;font-size:12.5px;min-height:36px;border-radius:9px}
   .btn:disabled{opacity:.5;cursor:not-allowed}
 
+  /* ---------- Reference photo tile ---------- */
   .refwrap{
-    position:relative; border:1px dashed #3a4258; border-radius:12px;
-    aspect-ratio: 1/1; background:#0d1018; overflow:hidden;
-    display:flex; align-items:center; justify-content:center;
+    position:relative; border:1.5px dashed #3a4258; border-radius:14px;
+    aspect-ratio: 1/1; max-width:240px; margin:0 auto;
+    background:repeating-linear-gradient(45deg, #0d1018 0 10px, #0b0e15 10px 20px);
+    overflow:hidden; display:flex; align-items:center; justify-content:center;
+    transition: border-color .15s, transform .08s;
   }
+  .refwrap:active{ transform: scale(.99); }
   .refwrap img{width:100%;height:100%;object-fit:cover;display:block}
-  .refwrap .empty{color:var(--muted);font-size:12px;text-align:center;padding:18px}
+  .refwrap .empty{color:var(--muted);font-size:13px;text-align:center;padding:18px;line-height:1.4}
   .refwrap .badge{
     position:absolute; left:8px; top:8px;
-    background:rgba(0,0,0,.65); color:#fff; font-size:10px;
-    padding:3px 7px; border-radius:6px; letter-spacing:.5px;
+    background:rgba(0,0,0,.7); color:#fff; font-size:10px;
+    padding:4px 8px; border-radius:6px; letter-spacing:.6px; font-weight:700;
   }
   .refwrap .lock{
     position:absolute; right:8px; top:8px;
     background:rgba(70,211,154,.18); color:var(--ok);
     border:1px solid rgba(70,211,154,.4);
-    font-size:10px; padding:3px 7px; border-radius:6px;
+    font-size:10px; padding:4px 8px; border-radius:6px; font-weight:600;
   }
 
-  .scenes{display:flex;flex-direction:column;gap:8px;max-height:46vh;overflow:auto;padding-right:4px}
+  /* ---------- Scenes list ---------- */
+  .scenes{display:flex;flex-direction:column;gap:10px;max-height:none;overflow:visible;padding-right:0}
   .scene{
-    background:var(--panel2); border:1px solid var(--line); border-radius:11px; padding:10px;
-    display:grid; grid-template-columns: 70px 1fr; gap:10px; align-items:start;
+    background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:12px;
+    display:grid; grid-template-columns: 72px 1fr; gap:12px; align-items:start;
   }
   .scene .thumb{
-    width:70px;height:70px;border-radius:8px;background:#0d1018;overflow:hidden;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:10px;border:1px solid var(--line)
+    width:72px;height:72px;border-radius:9px;background:#0d1018;overflow:hidden;
+    display:flex;align-items:center;justify-content:center;color:var(--muted);
+    font-size:10px;border:1px solid var(--line); flex-shrink:0;
   }
   .scene .thumb img{width:100%;height:100%;object-fit:cover}
   .scene .meta{font-size:11px;color:var(--muted);margin-top:2px}
-  .scene .title{display:flex;gap:6px;align-items:center}
+  .scene .title{display:flex;gap:6px;align-items:center;margin-bottom:4px}
   .scene .title .num{
     background:var(--chip); color:var(--text); border-radius:6px;
-    padding:2px 7px; font-size:11px; font-weight:700;
+    padding:2px 8px; font-size:11px; font-weight:700;
   }
-  .scene .actions{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
-  .scene textarea{min-height:50px;font-size:12px}
-  .scene .stateline{font-size:11px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
-  .chip{font-size:10px;padding:2px 6px;border-radius:5px;background:#0f1320;color:var(--muted);border:1px solid var(--line)}
+  .scene .title input{
+    font-weight:600;background:transparent;border:0;color:var(--text);
+    width:100%;font-size:14px;padding:4px 0;
+  }
+  .scene .title input:focus{background:#0d1018;border-radius:6px;padding:4px 6px}
+  .scene .actions{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+  .scene textarea{min-height:60px;font-size:13px;padding:10px 12px}
+  .scene .stateline{font-size:11px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:4px}
+  .chip{font-size:10px;padding:3px 7px;border-radius:5px;background:#0f1320;color:var(--muted);border:1px solid var(--line);font-weight:600}
   .chip.ok{color:var(--ok);border-color:#1f3a2e;background:rgba(70,211,154,.08)}
   .chip.run{color:var(--warn);border-color:#3a2c1a;background:rgba(255,180,84,.08)}
   .chip.bad{color:var(--bad);border-color:#3a1f1f;background:rgba(255,107,107,.08)}
 
-  .stage{
-    display:flex;flex-direction:column;gap:12px;min-width:0;
+  /* ---------- Stage (center) ---------- */
+  .stage{ display:flex; flex-direction:column; gap:12px; min-width:0; }
+  .stage-head{
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap;
   }
-  .stage .preview{
-    background:#000; border:1px solid var(--line); border-radius:12px;
+  .stage-head h2{margin:0}
+  .stage-head .small{ flex:1 1 auto; }
+  .stage-head .head-actions{ display:flex; gap:8px; }
+
+  .preview{
+    background:#000; border:1px solid var(--line); border-radius:14px;
     aspect-ratio: 16/9; overflow:hidden; position:relative;
     display:flex;align-items:center;justify-content:center;
+    background-image: linear-gradient(135deg, #0d1018 25%, transparent 25%, transparent 75%, #0d1018 75%),
+                      linear-gradient(135deg, #0d1018 25%, transparent 25%, transparent 75%, #0d1018 75%);
+    background-size: 24px 24px; background-position: 0 0, 12px 12px;
   }
-  .stage .preview img, .stage .preview video{width:100%;height:100%;object-fit:contain;background:#000}
-  .stage .preview .placeholder{color:var(--muted);font-size:12px;text-align:center;padding:20px}
-  .stage .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-  .stage .log{
-    background:#0a0c12; border:1px solid var(--line); border-radius:10px;
-    padding:10px; font:12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    color:#aab1c5; max-height: 28vh; overflow:auto; white-space:pre-wrap;
+  .preview img, .preview video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
+  .preview .placeholder{color:var(--muted);font-size:13px;text-align:center;padding:20px;line-height:1.4}
+
+  .controls{
+    display:grid; grid-template-columns: 1fr 1fr; gap:8px;
+  }
+  .controls .full{grid-column: 1 / -1}
+  .controls .small-btn{font-size:12px;padding:10px;border-radius:9px;min-height:40px}
+  .progress{
+    grid-column: 1 / -1; text-align:center; font-size:12px;
+    color:var(--muted); padding:6px 0; min-height:22px;
+  }
+
+  .log{
+    background:#0a0c12; border:1px solid var(--line); border-radius:12px;
+    padding:10px 12px; font:12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color:#aab1c5; max-height: 30vh; overflow:auto; white-space:pre-wrap;
   }
   .log .err{color:#ff8a8a}
   .log .ok{color:#7fe5b6}
   .log .warn{color:#ffcf8a}
 
+  /* ---------- Gallery ---------- */
   .gallery{
-    display:grid; grid-template-columns: repeat(2, 1fr); gap:8px;
+    display:grid; grid-template-columns: repeat(2, 1fr); gap:10px;
   }
   .gitem{
-    background:#0d1018; border:1px solid var(--line); border-radius:10px;
+    background:#0d1018; border:1px solid var(--line); border-radius:12px;
     overflow:hidden; aspect-ratio: 1/1; position:relative;
   }
   .gitem img{width:100%;height:100%;object-fit:cover;display:block}
   .gitem .label{
-    position:absolute;left:6px;bottom:6px;background:rgba(0,0,0,.6);
-    font-size:10px;padding:2px 6px;border-radius:5px;color:#fff;
+    position:absolute;left:6px;bottom:6px;background:rgba(0,0,0,.7);
+    font-size:10px;padding:3px 7px;border-radius:5px;color:#fff;font-weight:600;
   }
   .gitem .dl{
-    position:absolute;right:6px;top:6px;background:rgba(0,0,0,.55);
+    position:absolute;right:6px;top:6px;background:rgba(0,0,0,.6);
     border:1px solid #36405c;color:#fff;border-radius:6px;
-    padding:2px 6px;font-size:11px;cursor:pointer;
+    padding:4px 8px;font-size:11px;cursor:pointer;min-height:28px;
   }
+
   .empty-state{
-    color:var(--muted);font-size:12px;text-align:center;padding:24px;border:1px dashed #2a3045;border-radius:10px;
+    color:var(--muted);font-size:13px;text-align:center;padding:24px;
+    border:1px dashed #2a3045;border-radius:12px;line-height:1.5;
   }
-  .sep{height:1px;background:var(--line);margin:4px 0}
+  .sep{height:1px;background:var(--line);margin:6px 0}
   .kbd{font:11px ui-monospace,monospace;background:#0d1018;border:1px solid var(--line);border-radius:4px;padding:1px 5px;color:#cfd5e7}
   .toggle{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;cursor:pointer;user-select:none}
   .toggle input{accent-color:var(--accent)}
   .small{font-size:11px;color:var(--muted)}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-  .video-strip{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+
+  .video-strip{display:flex;flex-direction:column;gap:8px;margin-top:4px}
   .video-strip .row{
-    display:grid; grid-template-columns: 80px 1fr auto; gap:8px; align-items:center;
-    background:#0d1018;border:1px solid var(--line);border-radius:9px;padding:6px;
+    display:grid; grid-template-columns: 96px 1fr; grid-template-rows: auto auto; gap:6px;
+    align-items:center; background:#0d1018;border:1px solid var(--line);
+    border-radius:12px;padding:8px;
   }
-  .video-strip video{width:80px;height:45px;background:#000;border-radius:5px;object-fit:cover}
-  .video-strip .label{font-size:12px}
+  .video-strip video{
+    grid-row: 1 / 3; width:96px;height:64px;background:#000;
+    border-radius:8px;object-fit:cover;
+  }
+  .video-strip .label{font-size:13px;font-weight:500}
   .video-strip .label .id{color:var(--accent);font-weight:700;margin-right:6px}
+  .video-strip .actions{display:flex;gap:6px}
+
+  /* ---------- Bottom tab nav (mobile only) ---------- */
+  .tabbar{
+    display:none; /* shown on narrow viewports */
+    position:fixed; left:0; right:0; bottom:0;
+    padding:8px 8px calc(8px + var(--safe-bottom));
+    background:linear-gradient(180deg, rgba(13,16,24,.85), rgba(11,13,18,.95));
+    border-top:1px solid var(--line);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    z-index:60;
+    justify-content: space-around;
+    gap:4px;
+  }
+  .tabbar button{
+    flex:1; background:transparent; border:0; color:var(--muted);
+    padding:8px 6px; border-radius:10px; cursor:pointer;
+    display:flex; flex-direction:column; align-items:center; gap:2px;
+    font-size:10.5px; font-weight:600; min-height:50px;
+    transition: color .15s, background .15s;
+  }
+  .tabbar button .ic{ font-size:20px; line-height:1; }
+  .tabbar button.active{
+    color:var(--accent);
+    background: var(--accent-soft);
+  }
+
+  /* ---------- Responsive ---------- */
+  @media (max-width: 1180px){
+    .panels{ grid-template-columns: 1fr; }
+    .panels > [data-tab]{ display:none; }
+    .panels > [data-tab].active{ display:flex; }
+    .tabbar{ display:flex; }
+    .pill.hide-narrow{ display:inline-flex; }
+    .refwrap{ max-width:200px; }
+  }
+  @media (max-width: 480px){
+    .gallery{ grid-template-columns: repeat(2, 1fr); }
+    .controls{ grid-template-columns: 1fr; }
+  }
+  @media (min-width: 1181px){
+    .tabbar{ display:none; }
+  }
 </style>
 </head>
 <body>
 
 <header>
   <div class="logo" aria-hidden="true"></div>
-  <div>
+  <div class="titles">
     <h1>Trailer Studio</h1>
-    <div class="sub">Face-locked image + video generator for trailers</div>
+    <div class="sub">Face-locked image + video for trailers</div>
   </div>
   <div class="right">
-    <span id="connState" class="pill">Not connected</span>
-    <span class="pill" title="Identity lock — the same reference photo is fed to every image and video call so the face doesn't drift.">Identity Lock: ON</span>
+    <span id="connState" class="pill">Offline</span>
+    <span class="pill hide-narrow" title="Identity lock — the same reference photo is fed to every image and video call so the face doesn't drift.">🔒 Locked</span>
   </div>
 </header>
 
 <main>
-  <!-- LEFT: Identity + Script -->
-  <section class="panel" aria-label="Identity & Script">
+  <div class="panels">
+
+  <!-- TAB 1: Identity + Script -->
+  <section class="panel" data-tab="setup" aria-label="Identity & Script">
     <div>
       <h2>1. Identity Reference</h2>
       <div class="hint">Upload ONE clear face photo. The same image is sent as <span class="kbd">image_url</span> on every call. This is what stops the model from inventing a new face.</div>
@@ -313,15 +460,15 @@ Wide shot, library at night. He walks between shelves.
     </div>
   </section>
 
-  <!-- CENTER: Stage + log -->
-  <section class="stage" aria-label="Stage">
+  <!-- TAB 2: Stage -->
+  <section class="stage" data-tab="stage" aria-label="Stage">
     <div class="panel">
-      <div style="display:flex;align-items:center;gap:10px">
+      <div class="stage-head">
         <h2 style="margin:0">Stage</h2>
         <span class="small" id="stageSub">Reference image · scene frames · final video</span>
-        <div style="margin-left:auto;display:flex;gap:8px">
-          <button class="btn small" id="exportBtn">Export project (JSON)</button>
-          <button class="btn small" id="importBtn">Import JSON</button>
+        <div class="head-actions">
+          <button class="btn small" id="exportBtn">Export</button>
+          <button class="btn small" id="importBtn">Import</button>
           <input type="file" id="importFile" accept="application/json" style="display:none" />
         </div>
       </div>
@@ -331,11 +478,11 @@ Wide shot, library at night. He walks between shelves.
       </div>
 
       <div class="controls">
-        <button class="btn primary" id="genAllBtn" disabled>Generate all scenes (image → video)</button>
-        <button class="btn" id="genImagesBtn" disabled>Generate stills only</button>
-        <button class="btn" id="genVideosBtn" disabled>Generate videos from stills</button>
-        <button class="btn ghost" id="stopBtn" disabled>Stop</button>
-        <span class="small" id="progress"></span>
+        <button class="btn primary full" id="genAllBtn" disabled>▶ Generate all scenes</button>
+        <button class="btn small-btn" id="genImagesBtn" disabled>Stills only</button>
+        <button class="btn small-btn" id="genVideosBtn" disabled>Videos only</button>
+        <button class="btn small-btn ghost" id="stopBtn" disabled>Stop</button>
+        <div class="progress" id="progress"></div>
       </div>
 
       <div class="video-strip" id="videoStrip"></div>
@@ -345,8 +492,8 @@ Wide shot, library at night. He walks between shelves.
     </div>
   </section>
 
-  <!-- RIGHT: Scenes list + gallery -->
-  <section class="panel" aria-label="Scenes & Gallery">
+  <!-- TAB 3: Scenes + Gallery -->
+  <section class="panel" data-tab="scenes" aria-label="Scenes & Gallery">
     <div>
       <h2>Scenes</h2>
       <div class="hint">Each scene gets one still (with face lock) and one video clip. Same reference photo is sent to every call.</div>
@@ -362,6 +509,20 @@ Wide shot, library at night. He walks between shelves.
       <div class="empty-state" style="grid-column: 1 / -1">No stills yet.</div>
     </div>
   </section>
+
+  </div><!-- /.panels -->
+
+  <nav class="tabbar" aria-label="Sections">
+    <button data-goto="setup" class="active" aria-label="Setup">
+      <span class="ic">🎬</span><span>Setup</span>
+    </button>
+    <button data-goto="stage" aria-label="Stage">
+      <span class="ic">▶</span><span>Stage</span>
+    </button>
+    <button data-goto="scenes" aria-label="Scenes">
+      <span class="ic">🎞</span><span>Scenes</span>
+    </button>
+  </nav>
 </main>
 
 <script>
@@ -1173,6 +1334,49 @@ $('#importFile').addEventListener('change', async e => {
   $('#genVideosBtn').disabled = state.scenes.length===0;
   log('Project imported');
 });
+
+/* ---------------- Tab navigation (mobile) ---------------- */
+function showTab(name){
+  document.querySelectorAll('.panels > [data-tab]').forEach(el => {
+    el.classList.toggle('active', el.dataset.tab === name);
+  });
+  document.querySelectorAll('.tabbar button').forEach(b => {
+    b.classList.toggle('active', b.dataset.goto === name);
+  });
+  // Smoothly scroll the active panel to top
+  const target = document.querySelector(`.panels > [data-tab="${name}"]`);
+  if(target) window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+document.querySelectorAll('.tabbar button').forEach(b => {
+  b.addEventListener('click', () => showTab(b.dataset.goto));
+});
+
+/* On narrow viewports, show first tab by default */
+function syncDefaultTab(){
+  if(window.matchMedia('(max-width: 1180px)').matches){
+    document.querySelectorAll('.panels > [data-tab]').forEach((el,i) => {
+      el.classList.toggle('active', i === 0);
+    });
+  } else {
+    document.querySelectorAll('.panels > [data-tab]').forEach(el => el.classList.add('active'));
+  }
+}
+syncDefaultTab();
+window.addEventListener('resize', syncDefaultTab);
+
+/* Keep the bottom tabbar out of the way of focused inputs */
+document.addEventListener('focusin', e => {
+  if(!e.target.matches('input,textarea,select')) return;
+  setTimeout(() => {
+    e.target.scrollIntoView({ block:'center', behavior:'smooth' });
+  }, 200);
+});
+
+/* Prevent iOS rubber-band scroll from interfering with input focus */
+document.addEventListener('touchmove', e => {
+  if(e.target.closest('.log, .scenes, .gallery, .video-strip')) return;
+  // allow default outside of scrollable regions
+}, { passive: true });
 
 /* ---------------- Init ---------------- */
 $('#provider').dispatchEvent(new Event('change'));
