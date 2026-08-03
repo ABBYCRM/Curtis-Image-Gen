@@ -1,0 +1,1182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Trailer Studio — Face-Locked Image + Video</title>
+<style>
+  :root{
+    --bg:#0b0d12;
+    --panel:#141821;
+    --panel2:#1b2030;
+    --line:#262b3a;
+    --text:#e7eaf3;
+    --muted:#8a93a8;
+    --accent:#d4a24c;       /* warm gold, matches the reference photo */
+    --accent2:#7c5cff;
+    --ok:#46d39a;
+    --warn:#ffb454;
+    --bad:#ff6b6b;
+    --chip:#222838;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif}
+  a{color:var(--accent)}
+  header{
+    padding:18px 22px;border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:14px;background:linear-gradient(180deg,#10131c,#0b0d12);
+  }
+  header .logo{
+    width:34px;height:34px;border-radius:9px;
+    background:radial-gradient(circle at 30% 30%,#f3c876,#a8772a 70%,#5a3d12);
+    box-shadow:0 0 0 1px #000 inset, 0 6px 20px rgba(212,162,76,.25);
+  }
+  header h1{font-size:16px;margin:0;letter-spacing:.3px}
+  header .sub{color:var(--muted);font-size:12px}
+  header .right{margin-left:auto;display:flex;gap:10px;align-items:center}
+  .pill{font-size:11px;padding:4px 9px;border:1px solid var(--line);border-radius:999px;color:var(--muted);background:#0f1320}
+  .pill.ok{color:var(--ok);border-color:#1f3a2e}
+  .pill.bad{color:var(--bad);border-color:#3a1f1f}
+
+  main{
+    display:grid;grid-template-columns: 380px 1fr 380px; gap:14px; padding:14px;
+    min-height: calc(100vh - 65px);
+  }
+  @media (max-width: 1180px){ main{grid-template-columns: 1fr;} }
+
+  .panel{
+    background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    padding:14px; display:flex; flex-direction:column; gap:12px; min-width:0;
+  }
+  .panel h2{margin:0;font-size:13px;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);font-weight:600}
+  .panel .hint{color:var(--muted);font-size:12px}
+
+  label{font-size:12px;color:var(--muted);display:block;margin-bottom:6px}
+  input[type=text], input[type=password], input[type=url], select, textarea{
+    width:100%; background:#0d1018; color:var(--text);
+    border:1px solid var(--line); border-radius:9px; padding:9px 11px;
+    font:13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    outline:none;
+  }
+  input:focus, select:focus, textarea:focus{border-color:#3a4258}
+  textarea{min-height:90px; resize:vertical}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+  .btn{
+    background:linear-gradient(180deg,#2a3147,#1b2135);
+    color:var(--text); border:1px solid #36405c; border-radius:9px;
+    padding:9px 12px; font-weight:600; cursor:pointer; font-size:13px;
+  }
+  .btn:hover{border-color:#4b557a}
+  .btn.primary{
+    background:linear-gradient(180deg,#e9b25c,#a8772a);
+    color:#1a1300; border-color:#a8772a;
+  }
+  .btn.primary:hover{filter:brightness(1.05)}
+  .btn.ghost{background:transparent}
+  .btn.danger{background:#2a1418;border-color:#5a242a;color:#ffb0b0}
+  .btn.small{padding:6px 9px;font-size:12px}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+
+  .refwrap{
+    position:relative; border:1px dashed #3a4258; border-radius:12px;
+    aspect-ratio: 1/1; background:#0d1018; overflow:hidden;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .refwrap img{width:100%;height:100%;object-fit:cover;display:block}
+  .refwrap .empty{color:var(--muted);font-size:12px;text-align:center;padding:18px}
+  .refwrap .badge{
+    position:absolute; left:8px; top:8px;
+    background:rgba(0,0,0,.65); color:#fff; font-size:10px;
+    padding:3px 7px; border-radius:6px; letter-spacing:.5px;
+  }
+  .refwrap .lock{
+    position:absolute; right:8px; top:8px;
+    background:rgba(70,211,154,.18); color:var(--ok);
+    border:1px solid rgba(70,211,154,.4);
+    font-size:10px; padding:3px 7px; border-radius:6px;
+  }
+
+  .scenes{display:flex;flex-direction:column;gap:8px;max-height:46vh;overflow:auto;padding-right:4px}
+  .scene{
+    background:var(--panel2); border:1px solid var(--line); border-radius:11px; padding:10px;
+    display:grid; grid-template-columns: 70px 1fr; gap:10px; align-items:start;
+  }
+  .scene .thumb{
+    width:70px;height:70px;border-radius:8px;background:#0d1018;overflow:hidden;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:10px;border:1px solid var(--line)
+  }
+  .scene .thumb img{width:100%;height:100%;object-fit:cover}
+  .scene .meta{font-size:11px;color:var(--muted);margin-top:2px}
+  .scene .title{display:flex;gap:6px;align-items:center}
+  .scene .title .num{
+    background:var(--chip); color:var(--text); border-radius:6px;
+    padding:2px 7px; font-size:11px; font-weight:700;
+  }
+  .scene .actions{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+  .scene textarea{min-height:50px;font-size:12px}
+  .scene .stateline{font-size:11px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  .chip{font-size:10px;padding:2px 6px;border-radius:5px;background:#0f1320;color:var(--muted);border:1px solid var(--line)}
+  .chip.ok{color:var(--ok);border-color:#1f3a2e;background:rgba(70,211,154,.08)}
+  .chip.run{color:var(--warn);border-color:#3a2c1a;background:rgba(255,180,84,.08)}
+  .chip.bad{color:var(--bad);border-color:#3a1f1f;background:rgba(255,107,107,.08)}
+
+  .stage{
+    display:flex;flex-direction:column;gap:12px;min-width:0;
+  }
+  .stage .preview{
+    background:#000; border:1px solid var(--line); border-radius:12px;
+    aspect-ratio: 16/9; overflow:hidden; position:relative;
+    display:flex;align-items:center;justify-content:center;
+  }
+  .stage .preview img, .stage .preview video{width:100%;height:100%;object-fit:contain;background:#000}
+  .stage .preview .placeholder{color:var(--muted);font-size:12px;text-align:center;padding:20px}
+  .stage .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .stage .log{
+    background:#0a0c12; border:1px solid var(--line); border-radius:10px;
+    padding:10px; font:12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color:#aab1c5; max-height: 28vh; overflow:auto; white-space:pre-wrap;
+  }
+  .log .err{color:#ff8a8a}
+  .log .ok{color:#7fe5b6}
+  .log .warn{color:#ffcf8a}
+
+  .gallery{
+    display:grid; grid-template-columns: repeat(2, 1fr); gap:8px;
+  }
+  .gitem{
+    background:#0d1018; border:1px solid var(--line); border-radius:10px;
+    overflow:hidden; aspect-ratio: 1/1; position:relative;
+  }
+  .gitem img{width:100%;height:100%;object-fit:cover;display:block}
+  .gitem .label{
+    position:absolute;left:6px;bottom:6px;background:rgba(0,0,0,.6);
+    font-size:10px;padding:2px 6px;border-radius:5px;color:#fff;
+  }
+  .gitem .dl{
+    position:absolute;right:6px;top:6px;background:rgba(0,0,0,.55);
+    border:1px solid #36405c;color:#fff;border-radius:6px;
+    padding:2px 6px;font-size:11px;cursor:pointer;
+  }
+  .empty-state{
+    color:var(--muted);font-size:12px;text-align:center;padding:24px;border:1px dashed #2a3045;border-radius:10px;
+  }
+  .sep{height:1px;background:var(--line);margin:4px 0}
+  .kbd{font:11px ui-monospace,monospace;background:#0d1018;border:1px solid var(--line);border-radius:4px;padding:1px 5px;color:#cfd5e7}
+  .toggle{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;cursor:pointer;user-select:none}
+  .toggle input{accent-color:var(--accent)}
+  .small{font-size:11px;color:var(--muted)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .video-strip{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+  .video-strip .row{
+    display:grid; grid-template-columns: 80px 1fr auto; gap:8px; align-items:center;
+    background:#0d1018;border:1px solid var(--line);border-radius:9px;padding:6px;
+  }
+  .video-strip video{width:80px;height:45px;background:#000;border-radius:5px;object-fit:cover}
+  .video-strip .label{font-size:12px}
+  .video-strip .label .id{color:var(--accent);font-weight:700;margin-right:6px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo" aria-hidden="true"></div>
+  <div>
+    <h1>Trailer Studio</h1>
+    <div class="sub">Face-locked image + video generator for trailers</div>
+  </div>
+  <div class="right">
+    <span id="connState" class="pill">Not connected</span>
+    <span class="pill" title="Identity lock — the same reference photo is fed to every image and video call so the face doesn't drift.">Identity Lock: ON</span>
+  </div>
+</header>
+
+<main>
+  <!-- LEFT: Identity + Script -->
+  <section class="panel" aria-label="Identity & Script">
+    <div>
+      <h2>1. Identity Reference</h2>
+      <div class="hint">Upload ONE clear face photo. The same image is sent as <span class="kbd">image_url</span> on every call. This is what stops the model from inventing a new face.</div>
+    </div>
+
+    <div class="refwrap" id="refWrap">
+      <span class="badge">REFERENCE</span>
+      <span class="lock">🔒 LOCKED</span>
+      <div class="empty" id="refEmpty">Drop a face photo here<br>or paste an image URL</div>
+      <img id="refImg" alt="reference" style="display:none" />
+    </div>
+
+    <div class="row">
+      <div>
+        <label>Upload photo</label>
+        <input type="file" id="refFile" accept="image/*" />
+      </div>
+      <div>
+        <label>…or paste image URL</label>
+        <input type="url" id="refUrl" placeholder="https://…" />
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>Output aspect</label>
+        <select id="aspect">
+          <option value="1:1">1:1 (square)</option>
+          <option value="16:9" selected>16:9 (cinematic)</option>
+          <option value="9:16">9:16 (vertical)</option>
+          <option value="4:5">4:5 (poster)</option>
+        </select>
+      </div>
+      <div>
+        <label>Image quality</label>
+        <select id="quality">
+          <option value="1K">1K</option>
+          <option value="2K" selected>2K</option>
+          <option value="4K">4K</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="sep"></div>
+
+    <div>
+      <h2>2. A2E API Connection</h2>
+      <div class="hint">No password, no login. Paste your API key, pick the provider. Key is kept in this browser tab only.</div>
+    </div>
+
+    <div>
+      <label>Provider</label>
+      <select id="provider">
+        <option value="a2e">a2e.ai (default endpoint)</option>
+        <option value="hedra">Hedra</option>
+        <option value="heygen">HeyGen (Photo Avatar)</option>
+        <option value="did">D-ID</option>
+        <option value="fal-hedra">fal.ai · hedra-video-1</option>
+        <option value="replicate">Replicate (hedra / omnihuman)</option>
+        <option value="custom">Custom endpoint…</option>
+      </select>
+    </div>
+
+    <div>
+      <label>API key</label>
+      <input type="password" id="apiKey" placeholder="paste key" autocomplete="off" />
+    </div>
+
+    <div>
+      <label id="endpointLabel">Endpoint URL (override if needed)</label>
+      <input type="text" id="endpoint" placeholder="auto-filled from provider" />
+    </div>
+
+    <div class="row">
+      <div>
+        <label>Video model (image → video)</label>
+        <input type="text" id="vidModel" placeholder="e.g. hedra/video-1, omnihuman, a2e-talking" />
+      </div>
+      <div>
+        <label>Image model (still frames)</label>
+        <input type="text" id="imgModel" placeholder="e.g. flux-pro, imagen-3, nano-banana" />
+      </div>
+    </div>
+
+    <div class="row">
+      <button class="btn" id="testBtn">Test connection</button>
+      <button class="btn ghost small" id="clearKeyBtn">Clear key</button>
+    </div>
+
+    <div class="sep"></div>
+
+    <div>
+      <h2>3. Script</h2>
+      <div class="hint">Write the trailer script here. Each <span class="kbd">---</span> separator starts a new scene. The first line of each scene is treated as the scene title.</div>
+    </div>
+
+    <div>
+      <label>Trailer script</label>
+      <textarea id="script" placeholder="Title
+---
+A dimly lit study. He turns to camera and says:
+'In every silence, there's a story waiting to be told.'
+---
+Wide shot, library at night. He walks between shelves.
+'Some doors only open from the inside.'"></textarea>
+    </div>
+
+    <div class="row">
+      <button class="btn primary" id="parseBtn">Parse into scenes</button>
+      <button class="btn ghost" id="addSceneBtn">+ Add blank scene</button>
+    </div>
+
+    <div class="sep"></div>
+    <div>
+      <h2>4. Style prompt (applied to every scene)</h2>
+      <div class="small">Cinematic, warm, low-key lighting. Match the reference photo's wardrobe and setting unless the scene description overrides it.</div>
+      <textarea id="stylePrompt" style="margin-top:6px">cinematic film still, warm low-key lighting, shallow depth of field, golden hour tones, anamorphic lens, 35mm grain, photorealistic, the same adult man from the reference photo, identical face, identical skin tone, identical build, wearing the same black suit and gold tie, in a dim wood-paneled study with leather furniture and bookshelves</textarea>
+    </div>
+  </section>
+
+  <!-- CENTER: Stage + log -->
+  <section class="stage" aria-label="Stage">
+    <div class="panel">
+      <div style="display:flex;align-items:center;gap:10px">
+        <h2 style="margin:0">Stage</h2>
+        <span class="small" id="stageSub">Reference image · scene frames · final video</span>
+        <div style="margin-left:auto;display:flex;gap:8px">
+          <button class="btn small" id="exportBtn">Export project (JSON)</button>
+          <button class="btn small" id="importBtn">Import JSON</button>
+          <input type="file" id="importFile" accept="application/json" style="display:none" />
+        </div>
+      </div>
+
+      <div class="preview" id="preview">
+        <div class="placeholder">Generated frames and video will appear here.</div>
+      </div>
+
+      <div class="controls">
+        <button class="btn primary" id="genAllBtn" disabled>Generate all scenes (image → video)</button>
+        <button class="btn" id="genImagesBtn" disabled>Generate stills only</button>
+        <button class="btn" id="genVideosBtn" disabled>Generate videos from stills</button>
+        <button class="btn ghost" id="stopBtn" disabled>Stop</button>
+        <span class="small" id="progress"></span>
+      </div>
+
+      <div class="video-strip" id="videoStrip"></div>
+
+      <h2 style="margin-top:6px">Log</h2>
+      <div class="log" id="log" aria-live="polite"></div>
+    </div>
+  </section>
+
+  <!-- RIGHT: Scenes list + gallery -->
+  <section class="panel" aria-label="Scenes & Gallery">
+    <div>
+      <h2>Scenes</h2>
+      <div class="hint">Each scene gets one still (with face lock) and one video clip. Same reference photo is sent to every call.</div>
+    </div>
+    <div class="scenes" id="scenes">
+      <div class="empty-state">No scenes yet. Paste a script and click <b>Parse into scenes</b>.</div>
+    </div>
+
+    <div class="sep"></div>
+
+    <h2>Generated stills</h2>
+    <div class="gallery" id="gallery">
+      <div class="empty-state" style="grid-column: 1 / -1">No stills yet.</div>
+    </div>
+  </section>
+</main>
+
+<script>
+/* =========================================================================
+   Trailer Studio — face-locked image + video pipeline
+   No password. No login. API key stays in this tab.
+   ========================================================================= */
+
+/* ---------------- Provider presets ----------------
+   Each provider has:
+     - endpoint(): the URL we POST to
+     - headers(k): headers including the API key
+     - submitImage({prompt, refUrl, aspect, quality, model}): returns {jobId, pollUrl, raw}
+     - pollImage({pollUrl, headers, raw}): returns {status, imageUrl, error}
+     - submitVideo({refUrl, script, model, aspect}): returns {jobId, pollUrl, raw}
+     - pollVideo({pollUrl, headers, raw}): returns {status, videoUrl, error}
+   The implementations are intentionally lightweight and use generic
+   long-poll patterns; tweak the JSON shapes per provider in one place.
+   ----------------------------------------------------------------------- */
+
+const PROVIDERS = {
+  a2e: {
+    label: "a2e.ai",
+    defaultEndpoint: "https://api.a2e.ai/v1/generate",
+    imageModel: "a2e-image-v1",
+    videoModel: "a2e-talking-v1",
+    /* a2e.ai — assumed generic async job pattern. Adjust payload to the
+       real shape once you have docs. The KEY thing is the reference image
+       is always included in BOTH image and video calls. */
+    async submitImage({prompt, refUrl, aspect, quality, model}) {
+      const body = {
+        type: "image",
+        model: model || this.imageModel,
+        prompt,
+        reference_image_url: refUrl,           // <-- FACE LOCK
+        face_lock: true,
+        identity_preserve: true,
+        aspect_ratio: aspect,
+        quality,
+      };
+      return postJson(this._endpoint(), body, this._headers());
+    },
+    async pollImage(p){ return pollGeneric(p); },
+    async submitVideo({refUrl, script, model, aspect}) {
+      const body = {
+        type: "video",
+        model: model || this.videoModel,
+        script,
+        reference_image_url: refUrl,           // <-- FACE LOCK
+        face_lock: true,
+        identity_preserve: true,
+        aspect_ratio: aspect,
+        duration_seconds: 6,
+      };
+      return postJson(this._endpoint(), body, this._headers());
+    },
+    async pollVideo(p){ return pollGeneric(p); },
+    _endpoint(){ return document.getElementById('endpoint').value.trim() || this.defaultEndpoint; },
+    _headers(){ return authHeaders(); },
+  },
+
+  hedra: {
+    label: "Hedra",
+    defaultEndpoint: "https://api.hedra.com/v1/characters",
+    imageModel: "hedra/image-1",
+    videoModel: "hedra/video-1",
+    async submitImage({prompt, refUrl, aspect, quality, model}) {
+      // Hedra is video-first. For stills we fall back to a generic image call
+      // using the same reference. Adjust to your real Hedra image endpoint.
+      const body = {
+        type: "image",
+        model: model || this.imageModel,
+        prompt,
+        image_url: refUrl,
+        aspect_ratio: aspect,
+      };
+      return postJson(this._endpoint(), body, this._headers());
+    },
+    async pollImage(p){ return pollGeneric(p); },
+    async submitVideo({refUrl, script, model, aspect}) {
+      // Hedra /characters POST then /characters/{id}/video
+      const headers = this._headers();
+      const create = await fetch(this._endpoint(), {
+        method:"POST",
+        headers:{...headers, "Content-Type":"application/json"},
+        body: JSON.stringify({ name: "trailer-"+Date.now(), image_url: refUrl })
+      });
+      const cj = await create.json();
+      const charId = cj.id || cj.character_id || cj.data?.id;
+      if(!charId) throw new Error("Hedra: no character id returned");
+      const v = await fetch(`${this._endpoint()}/${charId}/video`, {
+        method:"POST",
+        headers:{...headers, "Content-Type":"application/json"},
+        body: JSON.stringify({
+          model: model || this.videoModel,
+          text: script,
+          aspect_ratio: aspect,
+          audio: false,
+        })
+      });
+      const vj = await v.json();
+      return { jobId: vj.id || vj.job_id, pollUrl: `${this._endpoint()}/${charId}/video/${vj.id || vj.job_id}`, headers };
+    },
+    async pollVideo({pollUrl, headers}) {
+      const r = await fetch(pollUrl, { headers });
+      const j = await r.json();
+      const status = (j.status || j.state || "").toLowerCase();
+      const done = ["completed","succeeded","success","done"].includes(status);
+      const failed= ["failed","error","canceled"].includes(status);
+      return {
+        status: done ? "done" : failed ? "failed" : "running",
+        videoUrl: j.video_url || j.url || j.output_url || j.outputs?.[0]?.url,
+        error: j.error || j.message
+      };
+    },
+    _endpoint(){ return document.getElementById('endpoint').value.trim() || this.defaultEndpoint; },
+    _headers(){ return authHeaders(); },
+  },
+
+  heygen: {
+    label: "HeyGen",
+    defaultEndpoint: "https://api.heygen.com/v2",
+    imageModel: "heygen/photo-avatar",
+    videoModel: "heygen/avatar",
+    async submitImage({prompt, refUrl, aspect, quality, model}) {
+      // HeyGen does not have a free-form image gen. We use their
+      // talking-photo endpoint to *register* the avatar and treat the
+      // returned preview as the locked still. Adjust to your real flow.
+      const headers = this._headers();
+      const r = await fetch(`${this._endpoint()}/photo_avatar/upload`, {
+        method:"POST",
+        headers:{...headers, "Content-Type":"application/json"},
+        body: JSON.stringify({ image_url: refUrl, name: "trailer-ref-"+Date.now() })
+      });
+      const j = await r.json();
+      return { jobId: j.data?.id || j.id, pollUrl: `${this._endpoint()}/photo_avatar/${j.data?.id || j.id}`, headers };
+    },
+    async pollImage({pollUrl, headers}) {
+      const r = await fetch(pollUrl, { headers });
+      const j = await r.json();
+      const done = j.data?.status === "completed";
+      return {
+        status: done ? "done" : "failed",
+        imageUrl: j.data?.image_url || j.data?.preview_url,
+        error: j.data?.error?.msg
+      };
+    },
+    async submitVideo({refUrl, script, model, aspect}) {
+      // Upload photo as talking photo, then generate video
+      const headers = this._headers();
+      const up = await fetch(`${this._endpoint()}/photo_avatar/upload`, {
+        method:"POST", headers:{...headers, "Content-Type":"application/json"},
+        body: JSON.stringify({ image_url: refUrl, name: "trailer-clip-"+Date.now() })
+      });
+      const uj = await up.json();
+      const talkingId = uj.data?.id;
+      const gen = await fetch(`${this._endpoint()}/video/generate`, {
+        method:"POST", headers:{...headers, "Content-Type":"application/json"},
+        body: JSON.stringify({
+          video_inputs: [{
+            character: { type: "talking_photo", talking_photo_id: talkingId, scale: 1.0 },
+            voice: { type: "text", input_text: script, voice_id: "2d5b0e6cf36f460aa7fc47e3eee4ba54" }
+          }],
+          dimension: aspect === "9:16" ? {width:720,height:1280} : aspect === "1:1" ? {width:720,height:720} : {width:1280,height:720}
+        })
+      });
+      const gj = await gen.json();
+      return { jobId: gj.data?.video_id, pollUrl: `${this._endpoint()}/video_status.get?video_id=${gj.data?.video_id}`, headers };
+    },
+    async pollVideo({pollUrl, headers}) {
+      const r = await fetch(pollUrl, { headers });
+      const j = await r.json();
+      const s = j.data?.status;
+      return {
+        status: s === "completed" ? "done" : s === "failed" ? "failed" : "running",
+        videoUrl: j.data?.video_url,
+        error: j.data?.error?.msg
+      };
+    },
+    _endpoint(){ return document.getElementById('endpoint').value.trim() || this.defaultEndpoint; },
+    _headers(){ return authHeaders(); },
+  },
+
+  did: {
+    label: "D-ID",
+    defaultEndpoint: "https://api.d-id.com",
+    imageModel: "did/presenter",
+    videoModel: "did/talks",
+    async submitImage({prompt, refUrl, aspect, quality, model}) {
+      const headers = this._headers();
+      // D-ID uses "talks" with image_url. The first frame of the result is the still.
+      const r = await fetch(`${this._endpoint()}/talks`, {
+        method:"POST", headers:{...headers, "Content-Type":"application/json"},
+        body: JSON.stringify({
+          source_url: refUrl,
+          script: { type: "text", input: prompt || "still portrait" },
+          config: { stitch: false, result_format: "mp4" }
+        })
+      });
+      const j = await r.json();
+      return { jobId: j.id, pollUrl: `${this._endpoint()}/talks/${j.id}`, headers };
+    },
+    async pollImage({pollUrl, headers}) {
+      const r = await fetch(pollUrl, { headers });
+      const j = await r.json();
+      // We don't actually have a still — but D-ID returns a result_url (mp4)
+      return { status: j.status==="done"?"done":"running", imageUrl: j.result_url, error: j.error };
+    },
+    async submitVideo({refUrl, script, model, aspect}) {
+      const headers = this._headers();
+      const r = await fetch(`${this._endpoint()}/talks`, {
+        method:"POST", headers:{...headers, "Content-Type":"application/json"},
+        body: JSON.stringify({
+          source_url: refUrl,
+          script: { type: "text", input: script },
+          config: { stitch: true, result_format: "mp4" }
+        })
+      });
+      const j = await r.json();
+      return { jobId: j.id, pollUrl: `${this._endpoint()}/talks/${j.id}`, headers };
+    },
+    async pollVideo({pollUrl, headers}) {
+      const r = await fetch(pollUrl, { headers });
+      const j = await r.json();
+      return {
+        status: j.status==="done"?"done": j.status==="error"?"failed":"running",
+        videoUrl: j.result_url,
+        error: j.error?.message
+      };
+    },
+    _endpoint(){ return document.getElementById('endpoint').value.trim() || this.defaultEndpoint; },
+    _headers(){ return authHeaders(); },
+  },
+
+  "fal-hedra": {
+    label: "fal.ai · hedra",
+    defaultEndpoint: "https://queue.fal.run/fal-ai/hedra/video-1",
+    imageModel: "fal-ai/flux-pro",
+    videoModel: "fal-ai/hedra/video-1",
+    async submitImage({prompt, refUrl, aspect, quality, model}) {
+      const body = {
+        prompt,
+        image_url: refUrl,
+        aspect_ratio: aspect,
+        num_inference_steps: 28,
+        guidance_scale: 4.0,
+      };
+      return postJson(this._endpoint().replace("hedra/video-1", this.imageModel), body, this._headers());
+    },
+    async pollImage(p){ return pollFal(p); },
+    async submitVideo({refUrl, script, model, aspect}) {
+      const body = {
+        image_url: refUrl,
+        text: script,
+        aspect_ratio: aspect,
+        duration: 6,
+      };
+      return postJson(this._endpoint(), body, this._headers());
+    },
+    async pollVideo(p){ return pollFal(p); },
+    _endpoint(){ return document.getElementById('endpoint').value.trim() || this.defaultEndpoint; },
+    _headers(){ return authHeaders(); },
+  },
+
+  replicate: {
+    label: "Replicate",
+    defaultEndpoint: "https://api.replicate.com/v1/predictions",
+    imageModel: "black-forest-labs/flux-pro",
+    videoModel: "hedra/video-1",
+    async submitImage({prompt, refUrl, aspect, quality, model}) {
+      const body = {
+        version: model || this.imageModel, // or pass a real version hash
+        input: { prompt, image: refUrl, aspect_ratio: aspect, output_quality: quality }
+      };
+      return postJson(this._endpoint(), body, this._headers());
+    },
+    async pollImage(p){ return pollReplicate(p); },
+    async submitVideo({refUrl, script, model, aspect}) {
+      const body = {
+        version: model || this.videoModel,
+        input: { image: refUrl, text: script, aspect_ratio: aspect, duration: 6 }
+      };
+      return postJson(this._endpoint(), body, this._headers());
+    },
+    async pollVideo(p){ return pollReplicate(p); },
+    _endpoint(){ return document.getElementById('endpoint').value.trim() || this.defaultEndpoint; },
+    _headers(){ return authHeaders(); },
+  },
+
+  custom: {
+    label: "Custom",
+    defaultEndpoint: "",
+    imageModel: "",
+    videoModel: "",
+    async submitImage(p){ return postJson(this._endpoint(), { kind:"image", ...p }, this._headers()); },
+    async pollImage(p){ return pollGeneric(p); },
+    async submitVideo(p){ return postJson(this._endpoint(), { kind:"video", ...p }, this._headers()); },
+    async pollVideo(p){ return pollGeneric(p); },
+    _endpoint(){ return document.getElementById('endpoint').value.trim(); },
+    _headers(){ return authHeaders(); },
+  },
+};
+
+/* ---------------- Shared HTTP helpers ---------------- */
+
+function authHeaders(){
+  const k = document.getElementById('apiKey').value.trim();
+  const p = document.getElementById('provider').value;
+  const h = { "Content-Type":"application/json" };
+  if(!k) return h;
+  if(p === "replicate") h["Authorization"] = `Token ${k}`;
+  else if(p === "fal-hedra") h["Authorization"] = `Key ${k}`;
+  else h["Authorization"] = `Bearer ${k}`;
+  return h;
+}
+
+async function postJson(url, body, headers){
+  if(!url) throw new Error("No endpoint URL set");
+  log(`POST ${url}`);
+  const r = await fetch(url, { method:"POST", headers, body: JSON.stringify(body) });
+  const text = await r.text();
+  let j; try{ j = JSON.parse(text); } catch{ j = { raw: text }; }
+  if(!r.ok){
+    log(`<err>HTTP ${r.status}: ${text.slice(0,300)}</err>`, "err");
+    throw new Error(`HTTP ${r.status}: ${text.slice(0,200)}`);
+  }
+  // Try to discover job id + poll URL
+  const jobId = j.id || j.job_id || j.prediction_id || j.request_id || j.data?.id;
+  let pollUrl = j.poll_url || j.status_url;
+  if(!pollUrl && jobId){
+    pollUrl = url.replace(/\/?$/, '/') + jobId;
+  }
+  return { jobId, pollUrl, headers, raw: j };
+}
+
+async function pollGeneric({pollUrl, headers, raw}){
+  if(!pollUrl){ return { status:"done", imageUrl: raw?.image_url, videoUrl: raw?.video_url }; }
+  const r = await fetch(pollUrl, { headers });
+  const j = await r.json();
+  const status = (j.status || j.state || "").toString().toLowerCase();
+  const done = ["completed","succeeded","success","done","finished"].includes(status);
+  const failed = ["failed","error","canceled","cancelled"].includes(status);
+  return {
+    status: done ? "done" : failed ? "failed" : "running",
+    imageUrl: j.image_url || j.output_url || j.outputs?.[0]?.url || j.result?.image_url,
+    videoUrl: j.video_url || j.output_url || j.outputs?.[0]?.url || j.result?.video_url,
+    error: j.error?.message || j.error || j.message
+  };
+}
+
+async function pollFal({pollUrl, headers, raw}){
+  // fal returns {status, logs, response_url}
+  if(!pollUrl) return { status:"done", imageUrl: raw?.image?.url, videoUrl: raw?.video?.url };
+  const r = await fetch(pollUrl, { headers });
+  const j = await r.json();
+  if(j.status === "COMPLETED"){
+    return { status:"done", imageUrl: j.image?.url || j.video?.url, videoUrl: j.video?.url || j.image?.url };
+  }
+  if(j.status === "FAILED") return { status:"failed", error: j.error || "fal failed" };
+  return { status:"running" };
+}
+
+async function pollReplicate({pollUrl, headers, raw}){
+  if(!pollUrl) return { status:"done", imageUrl: Array.isArray(raw?.output)?raw.output[0]:raw?.output, videoUrl: Array.isArray(raw?.output)?raw.output[0]:raw?.output };
+  const r = await fetch(pollUrl, { headers });
+  const j = await r.json();
+  if(j.status === "succeeded"){
+    const out = Array.isArray(j.output)?j.output[0]:j.output;
+    return { status:"done", imageUrl: out, videoUrl: out };
+  }
+  if(j.status === "failed" || j.status === "canceled") return { status:"failed", error: j.error };
+  return { status:"running" };
+}
+
+async function pollUntilDone(poller, ctx, label){
+  const t0 = Date.now();
+  while(true){
+    const r = await poller(ctx);
+    if(r.status === "done")  { log(`<ok>${label} done in ${((Date.now()-t0)/1000).toFixed(1)}s</ok>`, "ok"); return r; }
+    if(r.status === "failed"){ log(`<err>${label} failed: ${r.error||"unknown"}</err>`, "err"); throw new Error(r.error || "job failed"); }
+    await sleep(2500);
+  }
+}
+
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+
+/* ---------------- Reference image handling ---------------- */
+
+let REF_DATA_URL = null;        // data: URL kept locally, base64
+let REF_REMOTE_URL = null;      // public URL of the same image (preferred for API)
+
+function setRefFromFile(file){
+  const fr = new FileReader();
+  fr.onload = () => {
+    REF_DATA_URL = fr.result;
+    document.getElementById('refImg').src = REF_DATA_URL;
+    document.getElementById('refImg').style.display = 'block';
+    document.getElementById('refEmpty').style.display = 'none';
+    log(`Reference loaded from file (${(file.size/1024).toFixed(0)} KB)`);
+  };
+  fr.readAsDataURL(file);
+}
+
+async function uploadReferenceIfNeeded(){
+  // Most providers want a public URL. If we only have a data: URL, try to
+  // upload it via the provider's "assets" endpoint, OR fall back to sending
+  // the data: URL directly (most accept it).
+  if(REF_REMOTE_URL) return REF_REMOTE_URL;
+  if(document.getElementById('refUrl').value.trim()){
+    REF_REMOTE_URL = document.getElementById('refUrl').value.trim();
+    return REF_REMOTE_URL;
+  }
+  if(!REF_DATA_URL) throw new Error("No reference image. Upload or paste a URL.");
+  // Try a generic base64 upload if provider supports it; otherwise just return
+  // the data URL (most APIs accept it).
+  return REF_DATA_URL;
+}
+
+/* ---------------- Script → scenes ---------------- */
+
+function parseScript(text){
+  const blocks = text.split(/^---$/m).map(s=>s.trim()).filter(Boolean);
+  return blocks.map((blk, i) => {
+    const lines = blk.split(/\r?\n/);
+    const title = lines[0]?.slice(0, 60) || `Scene ${i+1}`;
+    const body  = lines.slice(1).join('\n').trim() || title;
+    return {
+      id: crypto.randomUUID(),
+      n: i+1,
+      title,
+      description: body,
+      imageStatus: "idle",
+      videoStatus: "idle",
+      imageUrl: null,
+      videoUrl: null,
+    };
+  });
+}
+
+/* ---------------- State + UI ---------------- */
+
+const state = {
+  scenes: [],
+  stop: false,
+};
+
+const $ = sel => document.querySelector(sel);
+const scenesEl = $('#scenes');
+const galleryEl= $('#gallery');
+const logEl    = $('#log');
+const previewEl= $('#preview');
+const progressEl = $('#progress');
+const videoStripEl = $('#videoStrip');
+
+function log(msg, cls=""){
+  const t = new Date().toLocaleTimeString();
+  const span = document.createElement('div');
+  span.innerHTML = `<span style="color:#5a6478">[${t}]</span> ${cls==='err'?'<span class="err">'+msg+'</span>':cls==='ok'?'<span class="ok">'+msg+'</span>':cls==='warn'?'<span class="warn">'+msg+'</span>':msg}`;
+  logEl.appendChild(span);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function renderScenes(){
+  if(!state.scenes.length){
+    scenesEl.innerHTML = '<div class="empty-state">No scenes yet. Paste a script and click <b>Parse into scenes</b>.</div>';
+    return;
+  }
+  scenesEl.innerHTML = '';
+  state.scenes.forEach((s, i) => {
+    const el = document.createElement('div');
+    el.className = 'scene';
+    el.innerHTML = `
+      <div class="thumb">${s.imageUrl?`<img src="${s.imageUrl}" alt="">`:`#${i+1}`}</div>
+      <div>
+        <div class="title">
+          <span class="num">#${i+1}</span>
+          <input type="text" data-id="${s.id}" data-k="title" value="${escapeAttr(s.title)}" style="font-weight:600;background:transparent;border:0;color:var(--text);width:100%;font-size:13px;padding:2px 0">
+        </div>
+        <textarea data-id="${s.id}" data-k="description">${escapeText(s.description)}</textarea>
+        <div class="stateline">
+          <span class="chip ${chipClass(s.imageStatus)}">image: ${s.imageStatus}</span>
+          <span class="chip ${chipClass(s.videoStatus)}">video: ${s.videoStatus}</span>
+        </div>
+        <div class="actions">
+          <button class="btn small" data-act="genImg"  data-id="${s.id}">Generate still</button>
+          <button class="btn small" data-act="genVid"  data-id="${s.id}">Generate video</button>
+          <button class="btn small danger" data-act="del" data-id="${s.id}">Delete</button>
+        </div>
+      </div>
+    `;
+    scenesEl.appendChild(el);
+  });
+}
+
+function chipClass(s){
+  if(s==="done") return "ok";
+  if(s==="running" || s==="queued") return "run";
+  if(s==="failed") return "bad";
+  return "";
+}
+
+function renderGallery(){
+  const items = state.scenes.filter(s => s.imageUrl);
+  if(!items.length){
+    galleryEl.innerHTML = '<div class="empty-state" style="grid-column: 1 / -1">No stills yet.</div>';
+    return;
+  }
+  galleryEl.innerHTML = '';
+  items.forEach(s => {
+    const el = document.createElement('div');
+    el.className = 'gitem';
+    el.innerHTML = `
+      <img src="${s.imageUrl}" alt="">
+      <div class="label">#${s.n} · ${escapeText(s.title)}</div>
+      <button class="dl" data-act="dl" data-id="${s.id}">↓</button>
+    `;
+    galleryEl.appendChild(el);
+  });
+}
+
+function renderVideoStrip(){
+  const items = state.scenes.filter(s => s.videoUrl);
+  if(!items.length){ videoStripEl.innerHTML = ''; return; }
+  videoStripEl.innerHTML = '<div class="small" style="color:var(--muted)">Generated clips</div>';
+  items.forEach(s => {
+    const el = document.createElement('div');
+    el.className = 'row';
+    el.innerHTML = `
+      <video src="${s.videoUrl}" muted loop playsinline></video>
+      <div class="label"><span class="id">#${s.n}</span>${escapeText(s.title)}</div>
+      <div style="display:flex;gap:6px">
+        <button class="btn small" data-act="useStill" data-id="${s.id}">Use still</button>
+        <a class="btn small" href="${s.videoUrl}" download="scene-${s.n}.mp4" target="_blank" rel="noopener">Download</a>
+      </div>
+    `;
+    videoStripEl.appendChild(el);
+    const v = el.querySelector('video');
+    v.addEventListener('mouseenter', ()=>v.play().catch(()=>{}));
+    v.addEventListener('mouseleave',()=>v.pause());
+  });
+}
+
+function setPreviewFromScene(s){
+  if(s.videoUrl){
+    previewEl.innerHTML = `<video src="${s.videoUrl}" autoplay loop controls style="width:100%;height:100%"></video>`;
+  } else if(s.imageUrl){
+    previewEl.innerHTML = `<img src="${s.imageUrl}" alt="">`;
+  }
+}
+
+function escapeAttr(s){ return (s||'').replace(/"/g,'&quot;'); }
+function escapeText(s){ return (s||'').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+/* ---------------- Event wiring ---------------- */
+
+$('#refFile').addEventListener('change', e => {
+  const f = e.target.files[0]; if(f) setRefFromFile(f);
+});
+$('#refUrl').addEventListener('change', e => {
+  const v = e.target.value.trim(); if(!v) return;
+  REF_REMOTE_URL = v;
+  document.getElementById('refImg').src = v;
+  document.getElementById('refImg').style.display = 'block';
+  document.getElementById('refEmpty').style.display = 'none';
+  log(`Reference set from URL`);
+});
+
+// Drag & drop
+const refWrap = $('#refWrap');
+['dragover','dragenter'].forEach(ev=>refWrap.addEventListener(ev, e=>{e.preventDefault();refWrap.style.borderColor='#d4a24c';}));
+['dragleave','drop'].forEach(ev=>refWrap.addEventListener(ev, e=>{e.preventDefault();refWrap.style.borderColor='';}));
+refWrap.addEventListener('drop', e => {
+  const f = e.dataTransfer.files[0]; if(f) setRefFromFile(f);
+});
+
+$('#provider').addEventListener('change', e => {
+  const p = PROVIDERS[e.target.value];
+  $('#endpoint').value = p.defaultEndpoint;
+  $('#vidModel').value = p.videoModel;
+  $('#imgModel').value = p.imageModel;
+  $('#endpointLabel').textContent = `${p.label} endpoint`;
+  log(`Provider set to ${p.label}`);
+});
+
+$('#parseBtn').addEventListener('click', () => {
+  const text = $('#script').value;
+  if(!text.trim()){ log('Script is empty', 'warn'); return; }
+  state.scenes = parseScript(text);
+  renderScenes(); renderGallery(); renderVideoStrip();
+  $('#genAllBtn').disabled = state.scenes.length === 0;
+  $('#genImagesBtn').disabled = state.scenes.length === 0;
+  $('#genVideosBtn').disabled = state.scenes.length === 0;
+  log(`Parsed ${state.scenes.length} scene(s)`);
+});
+
+$('#addSceneBtn').addEventListener('click', () => {
+  state.scenes.push({
+    id: crypto.randomUUID(),
+    n: state.scenes.length+1,
+    title: `Scene ${state.scenes.length+1}`,
+    description: '',
+    imageStatus: "idle", videoStatus: "idle",
+    imageUrl: null, videoUrl: null,
+  });
+  renderScenes();
+  $('#genAllBtn').disabled = false;
+  $('#genImagesBtn').disabled = false;
+  $('#genVideosBtn').disabled = false;
+});
+
+$('#testBtn').addEventListener('click', async () => {
+  try{
+    const ref = await uploadReferenceIfNeeded();
+    const p = currentProvider();
+    log(`Testing ${p.label}…`);
+    const sub = await p.submitImage({
+      prompt: "test portrait",
+      refUrl: ref,
+      aspect: $('#aspect').value,
+      quality: $('#quality').value,
+      model: $('#imgModel').value.trim() || p.imageModel,
+    });
+    log(`Test job submitted: ${sub.jobId || '(no id)'}`);
+    const res = await pollUntilDone(p.pollImage, sub, "Test");
+    log(`<ok>Connection OK</ok>`, "ok");
+    setConn(true);
+  } catch(e){
+    log(`<err>Connection failed: ${e.message}</err>`, "err");
+    setConn(false);
+  }
+});
+
+$('#clearKeyBtn').addEventListener('click', () => {
+  $('#apiKey').value = '';
+  log('API key cleared');
+});
+
+$('#genAllBtn').addEventListener('click', () => generateAll(true, true));
+$('#genImagesBtn').addEventListener('click', () => generateAll(true, false));
+$('#genVideosBtn').addEventListener('click', () => generateAll(false, true));
+$('#stopBtn').addEventListener('click', () => { state.stop = true; log('Stop requested', 'warn'); });
+
+function currentProvider(){ return PROVIDERS[$('#provider').value]; }
+function setConn(ok){
+  const el = $('#connState');
+  el.textContent = ok ? 'Connected' : 'Not connected';
+  el.className = 'pill ' + (ok ? 'ok' : 'bad');
+}
+
+/* Delegated scene events */
+scenesEl.addEventListener('click', async e => {
+  const btn = e.target.closest('button[data-act]');
+  if(!btn) return;
+  const id = btn.dataset.id;
+  const act = btn.dataset.act;
+  const s = state.scenes.find(x=>x.id===id);
+  if(!s) return;
+  if(act === 'genImg') await generateSceneImage(s);
+  if(act === 'genVid') await generateSceneVideo(s);
+  if(act === 'del'){
+    state.scenes = state.scenes.filter(x=>x.id!==id);
+    state.scenes.forEach((x,i)=>x.n=i+1);
+    renderScenes(); renderGallery(); renderVideoStrip();
+  }
+});
+
+scenesEl.addEventListener('input', e => {
+  const t = e.target;
+  if(!t.dataset.id) return;
+  const s = state.scenes.find(x=>x.id===t.dataset.id);
+  if(s) s[t.dataset.k] = t.value;
+});
+
+galleryEl.addEventListener('click', e => {
+  const btn = e.target.closest('button[data-act="dl"]');
+  if(!btn) return;
+  const s = state.scenes.find(x=>x.id===btn.dataset.id);
+  if(!s || !s.imageUrl) return;
+  const a = document.createElement('a');
+  a.href = s.imageUrl; a.download = `scene-${s.n}.png`; a.target = "_blank";
+  a.click();
+});
+
+videoStripEl.addEventListener('click', e => {
+  const btn = e.target.closest('button[data-act="useStill"]');
+  if(!btn) return;
+  const s = state.scenes.find(x=>x.id===btn.dataset.id);
+  if(s) setPreviewFromScene(s);
+});
+
+/* ---------------- Core generation ---------------- */
+
+async function generateAll(doImg, doVid){
+  if(state.stop) return;
+  const ref = await uploadReferenceIfNeeded();
+  setConn(true);
+  state.stop = false;
+  $('#stopBtn').disabled = false;
+  const total = state.scenes.length;
+  for(let i=0; i<state.scenes.length; i++){
+    if(state.stop) break;
+    const s = state.scenes[i];
+    progressEl.textContent = `Scene ${i+1}/${total}`;
+    if(doImg) await generateSceneImage(s, ref);
+    if(state.stop) break;
+    if(doVid) await generateSceneVideo(s, ref);
+  }
+  progressEl.textContent = state.stop ? 'Stopped' : 'Done';
+  $('#stopBtn').disabled = true;
+  renderScenes(); renderGallery(); renderVideoStrip();
+}
+
+async function generateSceneImage(s, refIn){
+  if(!s.imageUrl){
+    try{
+      s.imageStatus = "running"; renderScenes();
+      const ref = refIn || await uploadReferenceIfNeeded();
+      const p = currentProvider();
+      const style = $('#stylePrompt').value.trim();
+      const prompt = `${style}\n\nSCENE: ${s.title}\n${s.description}\n\nThe man's face must match the reference photo exactly. Same identity, same age, same skin tone, same features, same wardrobe.`;
+      log(`Scene #${s.n} → image submit`);
+      const sub = await p.submitImage({
+        prompt, refUrl: ref,
+        aspect: $('#aspect').value,
+        quality: $('#quality').value,
+        model: $('#imgModel').value.trim() || p.imageModel,
+      });
+      const res = await pollUntilDone(p.pollImage, sub, `Scene #${s.n} image`);
+      s.imageUrl = res.imageUrl;
+      s.imageStatus = res.imageUrl ? "done" : "failed";
+      if(!s.imageUrl) throw new Error("no image url returned");
+      setPreviewFromScene(s);
+    } catch(e){
+      s.imageStatus = "failed";
+      log(`<err>Scene #${s.n} image: ${e.message}</err>`, "err");
+    }
+    renderScenes(); renderGallery();
+  }
+}
+
+async function generateSceneVideo(s, refIn){
+  if(!s.videoUrl){
+    try{
+      s.videoStatus = "running"; renderScenes();
+      const ref = refIn || await uploadReferenceIfNeeded();
+      const p = currentProvider();
+      log(`Scene #${s.n} → video submit`);
+      const sub = await p.submitVideo({
+        refUrl: ref,
+        script: buildScriptForScene(s),
+        model: $('#vidModel').value.trim() || p.videoModel,
+        aspect: $('#aspect').value,
+      });
+      const res = await pollUntilDone(p.pollVideo, sub, `Scene #${s.n} video`);
+      s.videoUrl = res.videoUrl;
+      s.videoStatus = res.videoUrl ? "done" : "failed";
+      if(!s.videoUrl) throw new Error("no video url returned");
+      setPreviewFromScene(s);
+    } catch(e){
+      s.videoStatus = "failed";
+      log(`<err>Scene #${s.n} video: ${e.message}</err>`, "err");
+    }
+    renderScenes(); renderVideoStrip();
+  }
+}
+
+function buildScriptForScene(s){
+  // The "script" is the line(s) the character should say/perform in this scene.
+  // If the scene description starts with a quoted line, treat that as the
+  // spoken line. Otherwise use the whole description.
+  const m = s.description.match(/"([^"]+)"/);
+  return m ? m[1] : s.description;
+}
+
+/* ---------------- Export / Import ---------------- */
+
+$('#exportBtn').addEventListener('click', () => {
+  const dump = {
+    version: 1,
+    provider: $('#provider').value,
+    aspect: $('#aspect').value,
+    quality: $('#quality').value,
+    stylePrompt: $('#stylePrompt').value,
+    reference: { remoteUrl: REF_REMOTE_URL, dataUrl: REF_DATA_URL },
+    scenes: state.scenes,
+  };
+  const blob = new Blob([JSON.stringify(dump, null, 2)], { type:'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `trailer-project-${Date.now()}.json`;
+  a.click();
+});
+
+$('#importBtn').addEventListener('click', () => $('#importFile').click());
+$('#importFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; if(!f) return;
+  const txt = await f.text();
+  const j = JSON.parse(txt);
+  if(j.reference?.remoteUrl){ REF_REMOTE_URL = j.reference.remoteUrl; $('#refUrl').value = REF_REMOTE_URL; $('#refImg').src = REF_REMOTE_URL; $('#refImg').style.display='block'; $('#refEmpty').style.display='none'; }
+  else if(j.reference?.dataUrl){ REF_DATA_URL = j.reference.dataUrl; $('#refImg').src = REF_DATA_URL; $('#refImg').style.display='block'; $('#refEmpty').style.display='none'; }
+  if(j.provider) $('#provider').value = j.provider;
+  if(j.aspect)  $('#aspect').value  = j.aspect;
+  if(j.quality) $('#quality').value = j.quality;
+  if(j.stylePrompt) $('#stylePrompt').value = j.stylePrompt;
+  if(Array.isArray(j.scenes)) state.scenes = j.scenes;
+  renderScenes(); renderGallery(); renderVideoStrip();
+  $('#genAllBtn').disabled = state.scenes.length===0;
+  $('#genImagesBtn').disabled = state.scenes.length===0;
+  $('#genVideosBtn').disabled = state.scenes.length===0;
+  log('Project imported');
+});
+
+/* ---------------- Init ---------------- */
+$('#provider').dispatchEvent(new Event('change'));
+log('Ready. Upload a face reference, paste your A2E API key, then write a script.');
+</script>
+</body>
+</html>
