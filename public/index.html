@@ -2523,10 +2523,8 @@ if(_scenesEl){
 const restored = loadState();
 refreshProviderDropdown();
 loadSettings();
-$('#provider').dispatchEvent(new Event('change'));
-// Re-probe whenever the user switches provider, so the pill reflects
-// the new provider's readiness.
-{ const el = document.getElementById('provider'); if(el) el.addEventListener('change', () => probeProxy()); }
+// Fire provider-change if the dropdown exists (Settings tab only in the new UI)
+{ const _pEl = document.getElementById('provider'); if(_pEl){ _pEl.dispatchEvent(new Event('change')); _pEl.addEventListener('change', () => probeProxy()); } }
 // Run the initial probe so the pill tells the truth on page load.
 probeProxy();
 
