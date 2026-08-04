@@ -894,9 +894,14 @@ async function saveToAlbum({ kind, blob, prompt, title, provider, scene_n }) {
 }
 
 // Convert a data: URL (the typical OpenAI image response) to a Blob.
+// We do this with a manual base64 decode + Uint8Array so we don't need
+// to fetch the data: URL (the front-end's CSP forbids fetching from
+// data: origins via the connect-src directive).
 async function dataUrlToBlob(dataUrl) {
-  const res = await fetch(dataUrl);
-  return res.blob();
+  const match = /^data:([^;,]+);base64,([A-Za-z0-9+/=\s]+)$/.exec(dataUrl || '');
+  if (!match) throw new Error('Not a data URL');
+  const bytes = Uint8Array.from(atob(match[2].replace(/\s/g, '')), (c) => c.charCodeAt(0));
+  return new Blob([bytes], { type: match[1] });
 }
 
 
