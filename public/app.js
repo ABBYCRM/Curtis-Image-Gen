@@ -908,26 +908,19 @@ async function dataUrlToBlob(dataUrl) {
 async function downloadAsset(url, filename, mime = 'application/octet-stream') {
   try {
     if (!url) throw new Error('No URL to download.');
-    let href = url;
-    if (/^https:\/\//.test(url) && url.includes(API_BASE)) {
-      // Same-origin via the proxy. The asset is public for reads (the
-      // proxy signs the bytes itself), but if it's the OpenAI Sora bytes
-      // route the proxy reads x-openai-key from the request, so we
-      // forward whichever provider the URL came from.
-      const provider = url.includes('/openai/') ? 'openai' : 'a2e';
-      const response = await fetch(url, { headers: providerHeaders(provider) });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const blob = await response.blob();
-      href = URL.createObjectURL(blob);
-    }
+    // For data: and blob: URLs the browser handles the save directly.
+    // For https: URLs that point to the proxy's /album/ routes, the
+    // proxy already sends the bytes as a public asset (no auth required
+    // for reads) — use the URL directly so we don't add a CORS round-
+    // trip. (The fetch+blob approach used to be here but triggered a
+    // CORS preflight race in some browsers.)
     const anchor = document.createElement('a');
-    anchor.href = href;
+    anchor.href = url;
     anchor.download = filename;
     anchor.rel = 'noopener';
     document.body.append(anchor);
     anchor.click();
     anchor.remove();
-    if (href !== url) setTimeout(() => URL.revokeObjectURL(href), 1000);
   } catch (error) {
     setBanner('bad', `Download failed: ${error.message}`);
   }
