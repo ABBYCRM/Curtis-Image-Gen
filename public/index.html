@@ -2716,7 +2716,10 @@ function pickBestProvider(){
 }
 function currentProvider(){
   const id = pickBestProvider();
-  return (window.PROVIDERS && PROVIDERS[id]) || PROVIDERS.a2e;
+  // PROVIDERS is a module-scoped const. window.PROVIDERS would always be
+  // undefined, so referencing it via `window.X && X[id]` always falls
+  // back to A2E. Use PROVIDERS directly.
+  return PROVIDERS[id] || PROVIDERS.a2e;
 }
 function refreshProviderDropdown(){
   const sel = document.getElementById('provider');
