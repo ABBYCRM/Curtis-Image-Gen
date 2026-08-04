@@ -1101,17 +1101,52 @@ const PROVIDERS = {
     imageModel: "sora-2",
     videoModel: "sora-2",
     async submitImage({prompt, refUrl, aspect, quality, model}) {
-      // OpenAI doesn't have a free-form text-to-image at v1/videos.
-      // We could use gpt-image-1 at /v1/images/generations, but for the
-      // trailer flow we want one still per scene that we then animate.
-      // Fall back: ask Sora for a 4s video and grab the first frame.
-      // For now this throws so the user knows to pick A2E for stills.
-      const e = new Error("OpenAI: use Sora for both image and video. To get a still, ask for a 4s video and the proxy/extractor returns the first frame.");
-      e.friendly = "OpenAI doesn't generate stills directly. Switch the provider to A2E in Settings, or use the trailer workflow which generates a 4s Sora clip per scene and uses its first frame as the still.";
-      e.configError = true;
-      throw e;
+      // Use OpenAI's image model (gpt-image-1 by default) to generate the
+      // still. The proxy accepts `input_reference` for face lock.
+      const size = aspect === "9:16" ? "1024x1536" : aspect === "1:1" ? "1024x1024" : "1536x1024";
+      const m = model || document.getElementById('openaiDefaultModel')?.value || "gpt-image-1";
+      const body = {
+        model: m,
+        prompt,
+        size,
+        n: 1,
+        input_reference: refUrl,   // face lock
+      };
+      const r = await fetch(this._endpoint() + "/openai/images", {
+        method: "POST", headers: this._headers(),
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if(!r.ok){
+        const e = new Error(j?.error?.message || `OpenAI HTTP ${r.status}`);
+        e.friendly = j.friendly || e.message;
+        e.configError = j.retryable === false;
+        e.raw = j;
+        throw e;
+      }
+      // gpt-image-1 returns { data: [{ b64_json, url, revised_prompt }] }
+      // dall-e-3 returns { data: [{ url, revised_prompt }] }
+      // We synthesize a {jobId, pollUrl, raw} shape so the existing
+      // generateSceneImage flow can just call pollImage once and get a
+      // result URL back. gpt-image-1 jobs are synchronous — no polling.
+      const first = (j.data || j.images || [])[0] || {};
+      const url = first.url || (first.b64_json ? `data:image/png;base64,${first.b64_json}` : null);
+      if(!url) {
+        const e = new Error("OpenAI image gen returned no URL or b64 data");
+        e.friendly = "The image model returned no image. Try a different prompt or model.";
+        e.configError = false;
+        throw e;
+      }
+      return { jobId: 'sync', pollUrl: null, headers: this._headers(), raw: { data: [{ url }] } };
     },
-    async pollImage(p){ return { status: "failed", error: "OpenAI provider does not generate stills. Use Sora video and extract a frame, or pick A2E for stills." }; },
+    async pollImage(p){
+      // gpt-image-1 is synchronous — the result is already in raw.data.
+      if(!p || (!p.pollUrl && p.raw?.data?.[0]?.url)){
+        const url = p?.raw?.data?.[0]?.url;
+        return { status: url ? 'done' : 'failed', imageUrl: url, error: url ? null : 'no image' };
+      }
+      return { status: 'failed', error: 'OpenAI image job has no URL' };
+    },
     async submitVideo({refUrl, script, model, aspect}) {
       // Resolve size from aspect
       const size = aspect === "9:16" ? "720x1280" : aspect === "1:1" ? "720x720" : "1280x720";
