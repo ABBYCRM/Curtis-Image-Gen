@@ -1363,17 +1363,32 @@ const sleep = ms => new Promise(r=>setTimeout(r,ms));
 
 let REF_DATA_URL = null;        // data: URL kept locally, base64
 let REF_REMOTE_URL = null;      // public URL of the same image (preferred for API)
+const REF_LS_KEY = 'curtis:refImage:v1';
 
 function setRefFromFile(file){
   const fr = new FileReader();
   fr.onload = () => {
     REF_DATA_URL = fr.result;
-    document.getElementById('refImg').src = REF_DATA_URL;
-    document.getElementById('refImg').style.display = 'block';
-    document.getElementById('refEmpty').style.display = 'none';
+    const img = document.getElementById('refImg');
+    if(img){ img.src = REF_DATA_URL; img.style.display = 'block'; }
+    const empty = document.getElementById('refEmpty');
+    if(empty) empty.style.display = 'none';
     log(`Reference loaded from file (${(file.size/1024).toFixed(0)} KB)`);
+    // Persist so the photo survives a reload. Stored in its own key so a
+    // big image doesn't blow the quota on the main state blob.
+    try {
+      localStorage.setItem(REF_LS_KEY, REF_DATA_URL);
+    } catch(e){
+      log(`Couldn't save reference image locally: ${(e.message || '').slice(0, 80)}`, 'warn');
+    }
+    if(typeof enableLockBtn === 'function') enableLockBtn();
+    if(typeof refreshSetupBanner === 'function') refreshSetupBanner();
   };
   fr.readAsDataURL(file);
+}
+
+function clearRefFromStorage(){
+  try { localStorage.removeItem(REF_LS_KEY); } catch{}
 }
 
 async function uploadReferenceIfNeeded(){
@@ -2508,6 +2523,21 @@ function loadState(){
       if(img){ img.src = REF_REMOTE_URL; img.style.display = 'block'; }
       if(empty) empty.style.display = 'none';
     }
+    // The uploaded photo lives in its own localStorage key so a large
+    // image doesn't bloat the main state blob and trip the quota.
+    // Restore it here, AFTER the URL/remote paths, so a remote URL
+    // (if any) wins over a stale local copy.
+    try {
+      const savedImg = localStorage.getItem(REF_LS_KEY);
+      if(savedImg && !REF_REMOTE_URL && (!p.refUrl || !p.refUrl.trim())){
+        REF_DATA_URL = savedImg;
+        const img = document.getElementById('refImg');
+        const empty = document.getElementById('refEmpty');
+        if(img){ img.src = savedImg; img.style.display = 'block'; }
+        if(empty) empty.style.display = 'none';
+        log(`Restored reference image (${(savedImg.length/1024).toFixed(0)} KB)`);
+      }
+    } catch(e){ /* ignore quota/private-mode */ }
     if(p.faceLocked){
       FACE_LOCKED = true;
       // The new Setup tab uses a checkbox instead of separate buttons.
