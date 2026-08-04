@@ -1,31 +1,35 @@
-# Curtis Image Gen
+# Curtis Image Studio
 
-A face-locked image and video generator UI for building trailers with a consistent on-screen identity.
+A static browser application for generating consistent scene images from one reference photo and a script.
 
-Drop in one reference photo, paste an A2E-style API key, write a script, and the same face is sent on every image and video call so the model can't drift the identity between scenes.
+## Supported production paths
 
-## What's inside
+- **OpenAI / GPT Image 2** — generates or edits one image per scene through the companion proxy. When a reference image is supplied, the proxy uses the OpenAI image-edit endpoint so the image is actually included in the request.
+- **A2E** — generates scene images and can animate each approved scene image into a clip.
 
-- `index.html` — single-file static UI. No build step, no server, no login. Open it in any browser.
-- Designed to be paired with an A2E (avatar / talking-head) API such as Hedra, HeyGen, D-ID, fal.ai hedra, Replicate, or a custom endpoint.
+OpenAI video generation is intentionally disabled. The previously configured Sora models are deprecated, and the old proxy sent the reference image using an invalid JSON contract.
 
-## How face lock works
+## Security model
 
-Every call sends the reference image as `image_url` / `reference_image_url`. The style prompt reinforces *"the same adult man from the reference photo, identical face, identical skin tone, identical build, identical wardrobe"*. That double-pinning is what stops the model from inventing a new face between scenes.
+- Provider API keys are stored in `sessionStorage`, not `localStorage`.
+- Project data and the resized reference image are stored locally under the app namespace.
+- The frontend has a restrictive Content Security Policy and uses no third-party runtime scripts.
+- The proxy never exposes environment-held provider keys to anonymous callers. Environment keys require `APP_PROXY_TOKEN`.
 
-## Quick start
+## Files
 
-1. Open `index.html` in your browser (double-click works).
-2. Upload **one** clear face photo in the "Identity Reference" panel. This is the only face the model is allowed to use.
-3. Pick a provider in "A2E API Connection", paste your API key, click **Test connection**.
-4. Paste your trailer script. Separate scenes with `---` on its own line.
-5. Click **Generate stills only** to lock down visuals, then **Generate videos from stills** to animate. Or use **Generate all** to do it in one pass.
+- `public/index.html` — semantic application shell
+- `public/styles.css` — responsive styles
+- `public/app.js` — parser, state, provider client, generation workflow
+- `static-contract.js` — dependency-free DOM/runtime contract check
 
-## Project files
+## Local development
 
-- `index.html` — the app
-- `LICENSE` — MIT
+Serve `public/` from an HTTP server; opening the file directly is not supported because the CSP and assets expect an origin.
 
-## License
+```bash
+python3 -m http.server 8080 --directory public
+node static-contract.js
+```
 
-MIT
+The production client points to `https://curtis-a2e-proxy.onrender.com`.
