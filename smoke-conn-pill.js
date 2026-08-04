@@ -34,19 +34,17 @@ const URL = 'https://curtis-image-gen.onrender.com/?t=' + Date.now();
   await page.waitForTimeout(3000);
 
   // 1. Init-diagnostics: was it called? did it pass?
-  const diag = await page.evaluate(() => {
-    return {
-      diags: consoleMsgs.filter(m => m.includes('init-diagnostics')),
-      lastLog: Array.from(document.querySelectorAll('#log div')).slice(-3).map(d => d.textContent),
-    };
-  });
-  console.log('  init-diagnostics console msgs:', JSON.stringify(diag.diags));
+  const diagMsgs = consoleMsgs.filter(m => m.includes('init-diagnostics'));
+  console.log('  init-diagnostics console msgs:', JSON.stringify(diagMsgs));
+  const lastLog = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('#log div')).slice(-3).map(d => d.textContent)
+  );
   console.log('  last 3 log lines:');
-  for(const l of diag.lastLog) console.log('    >', l);
-  if(diag.diags.length === 0) {
+  for(const l of lastLog) console.log('    >', l);
+  if(diagMsgs.length === 0) {
     errors.push('No [init-diagnostics] log line — fitness test did not run');
-  } else if(diag.diags.some(m => m.includes('MISSING FUNCTIONS'))) {
-    errors.push('init-diagnostics reported MISSING FUNCTIONS: ' + diag.diags.join('; '));
+  } else if(diagMsgs.some(m => m.includes('MISSING FUNCTIONS'))) {
+    errors.push('init-diagnostics reported MISSING FUNCTIONS: ' + diagMsgs.join('; '));
   }
 
   // 2. Conn pill
