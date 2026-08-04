@@ -2,16 +2,21 @@
 
 const API_BASE = 'https://curtis-a2e-proxy.onrender.com';
 const PROJECT_KEY = 'curtis-studio:project:v2';
+// Credentials now persist in localStorage so they survive a page reload
+// and a new tab. Use the Wipe button (top-right) to clear them.
+// (We previously used sessionStorage, which silently dropped keys on
+// tab close — that was a real footgun for non-technical users.)
 const SESSION_KEY = 'curtis-studio:credentials:v2';
 
 const elements = Object.fromEntries([
   'connectionPill', 'banner', 'referenceDrop', 'referenceFile', 'referenceUrl',
   'referencePreview', 'referenceEmpty', 'clearReferenceButton', 'scriptInput',
   'parseButton', 'addSceneButton', 'providerSelect', 'aspectSelect', 'qualitySelect',
-  'styleInput', 'generateButton', 'stopButton', 'runProgress', 'progressText',
-  'sceneList', 'log', 'settingsButton', 'settingsDialog', 'openaiKeyInput',
-  'a2eKeyInput', 'appTokenInput', 'saveSettingsButton', 'wipeButton',
-  'exportButton', 'importFile'
+  'styleInput', 'generateButton', 'createAllVideosButton', 'stopButton',
+  'runProgress', 'progressText', 'sceneList', 'log', 'settingsButton',
+  'settingsDialog', 'openaiKeyInput', 'a2eKeyInput', 'appTokenInput',
+  'saveSettingsButton', 'wipeButton', 'downloadAllImagesButton',
+  'downloadAllVideosButton', 'exportButton', 'importFile'
 ].map((id) => [id, document.getElementById(id)]));
 
 const state = {
@@ -27,7 +32,7 @@ function createId() {
 
 function readCredentials() {
   try {
-    return JSON.parse(sessionStorage.getItem(SESSION_KEY) || '{}');
+    return JSON.parse(localStorage.getItem(SESSION_KEY) || '{}');
   } catch {
     return {};
   }
@@ -39,9 +44,9 @@ function saveCredentials() {
     a2eKey: elements.a2eKeyInput.value.trim(),
     appToken: elements.appTokenInput.value.trim(),
   };
-  sessionStorage.setItem(SESSION_KEY, JSON.stringify(credentials));
+  localStorage.setItem(SESSION_KEY, JSON.stringify(credentials));
   updateGenerateLabel();
-  setBanner('ok', 'Credentials saved for this browser session.');
+  setBanner('ok', 'Credentials saved in this browser. They survive page reloads. Use Wipe to clear.');
 }
 
 function providerHeaders(provider) {
@@ -200,8 +205,15 @@ function makeSceneCard(scene) {
   actions.className = 'button-row compact';
   const imageButton = actionButton('Regenerate image', async () => runSingleImage(scene));
   actions.append(imageButton);
-  if (scene.imageUrl) actions.append(actionButton('Download image', () => downloadUrl(scene.imageUrl, `scene-${scene.n}.png`), 'ghost'));
-  if (scene.videoUrl) actions.append(actionButton('Download clip', () => downloadUrl(scene.videoUrl, `scene-${scene.n}.mp4`), 'ghost'));
+  // Create video — wired to OpenAI sora-2 with A2E as fallback
+  const videoButton = actionButton(
+    scene.videoUrl ? 'Recreate clip' : 'Create video',
+    async () => runSingleVideo(scene)
+  );
+  videoButton.title = 'Uses OpenAI Sora 2 first; falls back to A2E automatically.';
+  actions.append(videoButton);
+  if (scene.imageUrl) actions.append(actionButton('Download image', () => downloadDataUrl(scene.imageUrl, `scene-${scene.n}.png`), 'ghost'));
+  if (scene.videoUrl) actions.append(actionButton('Download clip', () => downloadDataUrl(scene.videoUrl, `scene-${scene.n}.mp4`, 'video/mp4'), 'ghost'));
   actions.append(actionButton('Delete', () => {
     state.scenes = state.scenes.filter((item) => item.id !== scene.id);
     renumberScenes();
@@ -416,6 +428,171 @@ async function generateA2EVideo(scene) {
   return pollA2E('video', id);
 }
 
+// OpenAI Sora 2 video (still live; scheduled for removal 2026-09-24).
+// Returns the proxy URL of the completed video MP4 (the front-end
+// streams the bytes from /openai/videos/:id/content).
+async function generateOpenAIVideo(scene) {
+  if (!hasProviderKey('openai')) throw new Error('OpenAI key missing.');
+  const body = await apiRequest('/openai/videos', 'openai', {
+    method: 'POST',
+    body: JSON.stringify({
+      prompt: sceneVideoPrompt(scene),
+      model: 'sora-2',
+      aspectRatio: elements.aspectSelect.value,
+      duration: elements.qualitySelect.value === 'high' ? 'long' : 'short',
+      input_reference: scene.imageUrl || state.reference || null,
+    }),
+  });
+  if (!body.job_id) throw new Error('OpenAI returned no video job ID.');
+  return pollOpenAIVideo(body.job_id);
+}
+
+async function pollOpenAIVideo(jobId) {
+  for (let attempt = 0; attempt < 90; attempt += 1) {
+    const body = await apiRequest(`/openai/videos/${encodeURIComponent(jobId)}`, 'openai', { method: 'GET' });
+    if (body.status === 'completed' && body.video_url) {
+      // The proxy URL is relative; resolve against the proxy base so the
+      // <video src=…> tag can stream the MP4 with the x-openai-key header
+      // already attached by apiRequest. We use the proxy's /openai/videos
+      // route directly with the key as a query token? No — the proxy
+      // reads x-openai-key, not query. So we hand back a function that
+      // builds a blob URL with the Authorization header proxied through
+      // a fetch, since <video src=...> cannot set custom headers.
+      return await fetchOpenAIVideoBytes(jobId);
+    }
+    if (body.status === 'failed') {
+      throw new Error(body.error?.message || 'OpenAI video generation failed.');
+    }
+    await sleep(Math.min(2500 + attempt * 200, 6000));
+  }
+  throw new Error('OpenAI video job timed out.');
+}
+
+// Sora 2 returns the MP4 behind /v1/videos/:id/content which requires
+// the Authorization header. The browser's <video src> cannot set custom
+// headers, so we fetch the bytes (with the key) and turn them into a
+// blob URL that the <video> tag CAN load.
+async function fetchOpenAIVideoBytes(jobId) {
+  const response = await fetch(`${API_BASE}/openai/videos/${encodeURIComponent(jobId)}/content`, {
+    headers: providerHeaders('openai'),
+    signal: state.abortController?.signal,
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`OpenAI video download failed (${response.status}): ${text.slice(0, 200)}`);
+  }
+  const blob = await response.blob();
+  return URL.createObjectURL(blob);
+}
+
+// Create a single scene's video. Tries OpenAI first (sora-2),
+// falls back to A2E on auth/config error.
+async function runSingleVideo(scene) {
+  if (state.running) return;
+  if (!scene.imageUrl && !state.reference) {
+    setBanner('bad', 'Add a reference image or generate the scene image first.');
+    return;
+  }
+  const useOpenAI = hasProviderKey('openai');
+  const useA2E = hasProviderKey('a2e');
+  if (!useOpenAI && !useA2E) {
+    setBanner('bad', 'Open Settings and add an OpenAI or A2E key.');
+    elements.settingsDialog.showModal();
+    return;
+  }
+  state.running = true;
+  state.abortController = new AbortController();
+  scene.videoStatus = 'running';
+  scene.videoUrl = null;
+  renderScenes();
+  try {
+    let url = null;
+    if (useOpenAI) {
+      try {
+        log(`Scene ${scene.n}: submitting Sora 2 clip (OpenAI).`);
+        url = await generateOpenAIVideo(scene);
+      } catch (openaiErr) {
+        if (useA2E) {
+          log(`Scene ${scene.n}: Sora 2 failed (${openaiErr.message}); falling back to A2E.`, 'warn');
+          url = await generateA2EVideo(scene);
+        } else {
+          throw openaiErr;
+        }
+      }
+    } else {
+      log(`Scene ${scene.n}: submitting A2E clip.`);
+      url = await generateA2EVideo(scene);
+    }
+    scene.videoUrl = url;
+    scene.videoStatus = 'done';
+    log(`Scene ${scene.n}: clip complete.`, 'success');
+    setBanner('ok', `Scene ${scene.n} clip ready — click Download clip.`);
+  } catch (error) {
+    scene.videoStatus = 'failed';
+    setBanner('bad', error.message);
+    log(`Scene ${scene.n} video failed: ${error.message}`, 'error');
+  } finally {
+    state.running = false;
+    state.abortController = null;
+    renderScenes();
+  }
+}
+
+// Create videos for every scene that has an image. Tries OpenAI first,
+// falls back to A2E per scene.
+async function runAllVideos() {
+  if (state.running) return;
+  const scenes = state.scenes;
+  if (!scenes.length) return setBanner('bad', 'Parse at least one scene first.');
+  if (!hasProviderKey('openai') && !hasProviderKey('a2e')) {
+    setBanner('bad', 'Open Settings and add an OpenAI or A2E key.');
+    elements.settingsDialog.showModal();
+    return;
+  }
+  state.running = true;
+  state.abortController = new AbortController();
+  setBanner('info', 'Creating clips for every scene that has an image…');
+  let done = 0;
+  for (const scene of scenes) {
+    if (!scene.imageUrl && !state.reference) continue;
+    scene.videoStatus = 'running';
+    scene.videoUrl = null;
+    renderScenes();
+    try {
+      let url = null;
+      if (hasProviderKey('openai')) {
+        try {
+          log(`Scene ${scene.n}: submitting Sora 2 clip.`);
+          url = await generateOpenAIVideo(scene);
+        } catch (openaiErr) {
+          if (hasProviderKey('a2e')) {
+            log(`Scene ${scene.n}: Sora 2 failed (${openaiErr.message}); falling back to A2E.`, 'warn');
+            url = await generateA2EVideo(scene);
+          } else {
+            throw openaiErr;
+          }
+        }
+      } else {
+        log(`Scene ${scene.n}: submitting A2E clip.`);
+        url = await generateA2EVideo(scene);
+      }
+      scene.videoUrl = url;
+      scene.videoStatus = 'done';
+      log(`Scene ${scene.n}: clip complete.`, 'success');
+    } catch (error) {
+      scene.videoStatus = 'failed';
+      log(`Scene ${scene.n} video failed: ${error.message}`, 'error');
+    }
+    done += 1;
+    setProgress(done, scenes.length, `Clips: ${done}/${scenes.length} done.`);
+    renderScenes();
+  }
+  setBanner('ok', 'Clips complete. Click Download clip on any scene card.');
+  state.running = false;
+  state.abortController = null;
+  renderScenes();
+}
+
 async function runSingleImage(scene) {
   if (state.running) return;
   await runPipeline([scene], false);
@@ -498,6 +675,27 @@ function downloadUrl(url, filename) {
   document.body.append(anchor);
   anchor.click();
   anchor.remove();
+}
+
+// Bulk download: iterate every scene, give each one a short delay so the
+// browser does not collapse them into a single file. The user gets N
+// downloads (one per scene) — standard for "Download all" UX.
+function downloadAllImages() {
+  const scenes = state.scenes.filter((scene) => scene.imageUrl);
+  if (!scenes.length) return setBanner('warn', 'No scene images are ready yet.');
+  setBanner('info', `Downloading ${scenes.length} image${scenes.length === 1 ? '' : 's'}…`);
+  scenes.forEach((scene, index) => {
+    setTimeout(() => downloadUrl(scene.imageUrl, `scene-${scene.n}.png`), index * 200);
+  });
+}
+
+function downloadAllVideos() {
+  const scenes = state.scenes.filter((scene) => scene.videoUrl);
+  if (!scenes.length) return setBanner('warn', 'No scene clips are ready yet.');
+  setBanner('info', `Downloading ${scenes.length} clip${scenes.length === 1 ? '' : 's'}…`);
+  scenes.forEach((scene, index) => {
+    setTimeout(() => downloadUrl(scene.videoUrl, `scene-${scene.n}.mp4`), index * 200);
+  });
 }
 
 async function resizeImage(file) {
@@ -639,13 +837,16 @@ function wireEvents() {
   elements.styleInput.addEventListener('change', saveProject);
   elements.scriptInput.addEventListener('change', saveProject);
   elements.generateButton.addEventListener('click', () => runPipeline());
+  elements.createAllVideosButton.addEventListener('click', () => runAllVideos());
   elements.stopButton.addEventListener('click', () => state.abortController?.abort());
+  elements.downloadAllImagesButton.addEventListener('click', downloadAllImages);
+  elements.downloadAllVideosButton.addEventListener('click', downloadAllVideos);
   elements.settingsButton.addEventListener('click', () => elements.settingsDialog.showModal());
   elements.saveSettingsButton.addEventListener('click', saveCredentials);
   elements.wipeButton.addEventListener('click', () => {
-    if (!confirm('Delete the saved project and session credentials from this browser?')) return;
+    if (!confirm('Delete the saved project AND all saved API keys (OpenAI, A2E, app token) from this browser?')) return;
     localStorage.removeItem(PROJECT_KEY);
-    sessionStorage.removeItem(SESSION_KEY);
+    localStorage.removeItem(SESSION_KEY);
     location.reload();
   });
   elements.exportButton.addEventListener('click', exportProject);
