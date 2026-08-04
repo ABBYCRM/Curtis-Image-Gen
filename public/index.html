@@ -1409,16 +1409,64 @@ async function uploadReferenceIfNeeded(){
 /* ---------------- Script → scenes ---------------- */
 
 function parseScript(text){
-  const blocks = text.split(/^---$/m).map(s=>s.trim()).filter(Boolean);
+  // Two syntaxes are supported:
+  //   1) --- separated blocks: each block is a scene, first line is the title
+  //   2) "[0:00 - 0:03] Scene N: Title" headers — each header starts a new
+  //      scene. Within a scene, • Visual / • Audio / • Voiceover / • Text
+  //      Overlay bullets are extracted into structured fields used by the
+  //      image and video prompts.
+  // Preamble lines like "PART 3:", "Focus:", "Pacing:" are stripped before
+  // parsing so they don't become their own "scene".
+
+  const lines = text.split(/\r?\n/);
+  const hasTimeHeaders = lines.some(l => /^\[\d?:\d+\s*-\s*\d?:\d+\]\s*Scene\s+\d+:/i.test(l.trim()));
+
+  let body = text;
+  if(hasTimeHeaders){
+    let startIdx = 0;
+    for(let i = 0; i < lines.length; i++){
+      const l = lines[i].trim();
+      if(/^PART\s+\d+/i.test(l)) continue;
+      if(/^Focus:/i.test(l)) continue;
+      if(/^Pacing:/i.test(l)) continue;
+      if(l === '' || /^\[.*\]\s*Scene\s+\d+/i.test(l)){
+        startIdx = i;
+        break;
+      }
+    }
+    body = lines.slice(startIdx).join('\n');
+  }
+
+  const splitRe = hasTimeHeaders
+    ? /^(?=\[\d?:\d+\s*-\s*\d?:\d+\]\s*Scene\s+\d+:)/m
+    : /^---$/m;
+  const blocks = body.split(splitRe).map(s => s.trim()).filter(Boolean);
+
   return blocks.map((blk, i) => {
-    const lines = blk.split(/\r?\n/);
-    const title = lines[0]?.slice(0, 60) || `Scene ${i+1}`;
-    const body  = lines.slice(1).join('\n').trim() || title;
+    const blockLines = blk.split(/\r?\n/);
+    const title = blockLines[0]
+      .replace(/^\[.*?\]\s*/, '')
+      .replace(/^Scene\s+\d+:\s*/i, '')
+      .slice(0, 80) || `Scene ${i+1}`;
+    const description = blockLines.slice(1).join('\n').trim() || title;
+
+    // Pull structured fields out of the bullet list (if present)
+    const visualMatch  = description.match(/•\s*Visual:\s*([^\n]+)/i);
+    const voMatch      = description.match(/•\s*Voiceover:\s*"([^"]+)"/i);
+    const txtMatch     = description.match(/•\s*Text Overlay:\s*([^\n]+)/i);
+    const audioMatch   = description.match(/•\s*Audio\s*\/?\s*SFX:\s*([^\n]+)/i);
+    const timeMatch    = blockLines[0].match(/^\[(\d?\d:\d+\s*-\s*\d?\d:\d+)\]/);
+
     return {
       id: crypto.randomUUID(),
       n: i+1,
       title,
-      description: body,
+      description,
+      timecode: timeMatch ? timeMatch[1] : null,
+      visual: visualMatch ? visualMatch[1].trim() : null,
+      voiceover: voMatch ? voMatch[1].trim() : null,
+      textOverlay: txtMatch ? txtMatch[1].trim() : null,
+      audio: audioMatch ? audioMatch[1].trim() : null,
       imageStatus: "idle",
       videoStatus: "idle",
       imageUrl: null,
@@ -1801,7 +1849,11 @@ async function generateSceneImage(s, refIn){
         s.imageStatus = "running"; s.faceStatus = "checking"; renderScenes();
         const p = currentProvider();
         const style = $('#stylePrompt')?.value?.trim() || '';
-        const prompt = `${style}\n\nSCENE: ${s.title}\n${s.description}\n\nThe man's face must match the reference photo exactly. Same identity, same age, same skin tone, same features, same wardrobe.`;
+        // Prefer the structured Visual line when present (cleaner, more
+        // focused than dumping the full body which includes audio cues
+        // and voiceover text that the image model would just ignore).
+        const sceneBody = s.visual || s.description;
+        const prompt = `${style}\n\nSCENE: ${s.title}\n${sceneBody}\n\nThe man's face must match the reference photo exactly. Same identity, same age, same skin tone, same features, same wardrobe.${s.voiceover ? `\n\nAtmosphere from voiceover: ${s.voiceover}` : ''}`;
         log(`Scene #${s.n} → image submit (attempt ${attempt}/${FACE_RETRIES})`);
         const sub = await p.submitImage({
           prompt, refUrl: ref,
@@ -1897,8 +1949,10 @@ async function generateSceneVideo(s, refIn){
 
 function buildScriptForScene(s){
   // The "script" is the line(s) the character should say/perform in this scene.
-  // If the scene description starts with a quoted line, treat that as the
-  // spoken line. Otherwise use the whole description.
+  // Prefer the structured voiceover field if parseScript pulled one out of the
+  // • Voiceover: "..." bullet. Otherwise fall back to the first quoted line
+  // in the description, or the description itself.
+  if(s.voiceover) return s.voiceover;
   const m = s.description.match(/"([^"]+)"/);
   return m ? m[1] : s.description;
 }
