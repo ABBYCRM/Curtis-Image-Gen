@@ -807,7 +807,12 @@ const PROVIDERS = {
         error: d.failed_message || d.error
       };
     },
-    _endpoint(){ return document.getElementById('endpoint').value.trim() || this.defaultEndpoint; },
+    _endpoint(){
+      // #endpoint doesn't exist on the new Setup tab (it lives in Settings,
+      // and is also inferred from the active provider's defaultEndpoint).
+      // Read it defensively so submitImage/submitVideo don't throw.
+      return document.getElementById('endpoint')?.value?.trim() || this.defaultEndpoint;
+    },
     _headers(){ return authHeaders(); },
   },
 
@@ -865,7 +870,11 @@ const PROVIDERS = {
         error: j.error || j.message
       };
     },
-    _endpoint(){ return document.getElementById('endpoint').value.trim() || this.defaultEndpoint; },
+    _endpoint(){
+      // #endpoint lives in the Settings tab in the new UI; it may be absent
+      // on the Setup tab. Read it defensively.
+      return document.getElementById('endpoint')?.value?.trim() || this.defaultEndpoint;
+    },
     _headers(){ return authHeaders(); },
   },
 
@@ -929,7 +938,11 @@ const PROVIDERS = {
         error: j.data?.error?.msg
       };
     },
-    _endpoint(){ return document.getElementById('endpoint').value.trim() || this.defaultEndpoint; },
+    _endpoint(){
+      // #endpoint lives in the Settings tab in the new UI; it may be absent
+      // on the Setup tab. Read it defensively.
+      return document.getElementById('endpoint')?.value?.trim() || this.defaultEndpoint;
+    },
     _headers(){ return authHeaders(); },
   },
 
@@ -980,7 +993,11 @@ const PROVIDERS = {
         error: j.error?.message
       };
     },
-    _endpoint(){ return document.getElementById('endpoint').value.trim() || this.defaultEndpoint; },
+    _endpoint(){
+      // #endpoint lives in the Settings tab in the new UI; it may be absent
+      // on the Setup tab. Read it defensively.
+      return document.getElementById('endpoint')?.value?.trim() || this.defaultEndpoint;
+    },
     _headers(){ return authHeaders(); },
   },
 
@@ -1010,7 +1027,11 @@ const PROVIDERS = {
       return postJson(this._endpoint(), body, this._headers());
     },
     async pollVideo(p){ return pollFal(p); },
-    _endpoint(){ return document.getElementById('endpoint').value.trim() || this.defaultEndpoint; },
+    _endpoint(){
+      // #endpoint lives in the Settings tab in the new UI; it may be absent
+      // on the Setup tab. Read it defensively.
+      return document.getElementById('endpoint')?.value?.trim() || this.defaultEndpoint;
+    },
     _headers(){ return authHeaders(); },
   },
 
@@ -1035,7 +1056,11 @@ const PROVIDERS = {
       return postJson(this._endpoint(), body, this._headers());
     },
     async pollVideo(p){ return pollReplicate(p); },
-    _endpoint(){ return document.getElementById('endpoint').value.trim() || this.defaultEndpoint; },
+    _endpoint(){
+      // #endpoint lives in the Settings tab in the new UI; it may be absent
+      // on the Setup tab. Read it defensively.
+      return document.getElementById('endpoint')?.value?.trim() || this.defaultEndpoint;
+    },
     _headers(){ return authHeaders(); },
   },
 
@@ -1048,7 +1073,10 @@ const PROVIDERS = {
     async pollImage(p){ return pollGeneric(p); },
     async submitVideo(p){ return postJson(this._endpoint(), { kind:"video", ...p }, this._headers()); },
     async pollVideo(p){ return pollGeneric(p); },
-    _endpoint(){ return document.getElementById('endpoint').value.trim(); },
+    _endpoint(){
+      // No defaultEndpoint fallback here — caller is responsible.
+      return document.getElementById('endpoint')?.value?.trim();
+    },
     _headers(){ return authHeaders(); },
   },
   openai: {
@@ -1130,7 +1158,11 @@ const PROVIDERS = {
       }
       return { status: done ? "done" : failed ? "failed" : "running", videoUrl, error: j.error?.message };
     },
-    _endpoint(){ return document.getElementById('endpoint').value.trim() || this.defaultEndpoint; },
+    _endpoint(){
+      // #endpoint lives in the Settings tab in the new UI; it may be absent
+      // on the Setup tab. Read it defensively.
+      return document.getElementById('endpoint')?.value?.trim() || this.defaultEndpoint;
+    },
     _headers(){
       // The proxy doesn't need an Authorization header from the browser —
       // it injects the key from its env var. We send a hint header so the
@@ -1188,7 +1220,11 @@ const PROVIDERS = {
       }
       return { status: done ? "done" : failed ? "failed" : "running", videoUrl, error: j.error?.message };
     },
-    _endpoint(){ return document.getElementById('endpoint').value.trim() || this.defaultEndpoint; },
+    _endpoint(){
+      // #endpoint lives in the Settings tab in the new UI; it may be absent
+      // on the Setup tab. Read it defensively.
+      return document.getElementById('endpoint')?.value?.trim() || this.defaultEndpoint;
+    },
     _headers(){ return { "Content-Type": "application/json", "X-Provider": "gemini" }; },
   },
 
@@ -1197,12 +1233,20 @@ const PROVIDERS = {
 /* ---------------- Shared HTTP helpers ---------------- */
 
 function authHeaders(){
-  const k = document.getElementById('apiKey').value.trim();
-  const p = document.getElementById('provider').value;
+  // Legacy #apiKey + #provider fields don't exist on the new Setup tab —
+  // they lived there in the old flow. Read the equivalent values from
+  // wherever they DO exist (Settings tab + a mirrored copy that the
+  // Settings tab writes back to #apiKey when it can).
+  const k = (document.getElementById('apiKey')?.value
+          || document.getElementById('openaiKeyA2E')?.value
+          || '').trim();
+  const p = document.getElementById('provider')?.value || pickBestProvider();
   const h = { "Content-Type":"application/json" };
   if(!k) return h;
   if(p === "replicate") h["Authorization"] = `Token ${k}`;
   else if(p === "fal-hedra") h["Authorization"] = `Key ${k}`;
+  else if(p === "openai") h["Authorization"] = `Bearer ${k}`;
+  else if(p === "gemini") h["x-goog-api-key"] = k;
   else h["Authorization"] = `Bearer ${k}`;
   return h;
 }
@@ -2403,20 +2447,25 @@ const LS_DEBOUNCE_MS = 400;
 
 function saveState(){
   try {
+    // Every field is read with ?.value so a missing field on the new
+    // Setup tab doesn't kill the save. Legacy fields (provider, aspect,
+    // quality, endpoint, vidModel, imgModel) live on the Settings tab
+    // now; they may be absent at save time and that's fine.
+    const v = id => document.getElementById(id)?.value || '';
     const payload = {
       v: 1,
-      provider: $('#provider').value,
-      aspect: $('#aspect').value,
-      quality: $('#quality').value,
-      stylePrompt: $('#stylePrompt').value,
-      script: $('#script').value,
-      endpoint: $('#endpoint').value,
-      vidModel: $('#vidModel').value,
-      imgModel: $('#imgModel').value,
-      refUrl: $('#refUrl').value,
+      provider: v('provider') || 'a2e',
+      aspect: v('aspect') || '16:9',
+      quality: v('quality') || '2K',
+      stylePrompt: v('stylePrompt'),
+      script: v('script'),
+      endpoint: v('endpoint'),
+      vidModel: v('vidModel'),
+      imgModel: v('imgModel'),
+      refUrl: v('refUrl'),
       refRemoteUrl: REF_REMOTE_URL,
       faceLocked: FACE_LOCKED,
-      faceThreshold: $('#faceThreshold').value,
+      faceThreshold: v('faceThreshold') || '0.62',
       // scenes — but NOT the data: URL reference (too big) and only metadata
       scenes: state.scenes.map(s => ({
         id: s.id, n: s.n, title: s.title, description: s.description,
@@ -2642,6 +2691,36 @@ if(_wipeBtn) _wipeBtn.addEventListener('click', wipeLocal);
 log(restored
   ? `Restored ${state.scenes.length} scene(s) from local storage.`
   : 'Ready. Open Settings to paste an API key, then upload a face reference and write a script.');
+
+/* ---------------- __init_diagnostics__ ---------------- */
+// Fitness test: assert every function the runtime depends on actually
+// exists. Catches half-rewrites (workflow-rethink) at boot instead of
+// failing silent when a button is clicked.
+function __init_diagnostics__(){
+  const must = [
+    // core
+    'log','escapeText','escapeAttr',
+    'parseScript','setRefFromFile',
+    'renderScenes','renderGallery','renderVideoStrip','setPreviewFromScene','chipClass',
+    'loadState','saveState','saveStateDebounced',
+    'loadSettings','saveSettings','wipeLocal',
+    'pickBestProvider','currentProvider','refreshProviderDropdown',
+    'setConn','probeProxy','getProxyBase',
+    'setBanner','refreshSetupBanner','enableLockBtn',
+    'isConfigError','uploadReferenceIfNeeded',
+    'authHeaders','postJson','pollGeneric',
+    // event handlers we register
+    'exportProject','importProject',
+  ];
+  const missing = must.filter(name => typeof window[name] !== 'function');
+  if(missing.length){
+    console.error('[init-diagnostics] MISSING FUNCTIONS:', missing);
+    log(`Init error: missing ${missing.length} helper(s) — see console.`, 'err');
+  } else {
+    console.info('[init-diagnostics] OK — ' + must.length + ' helpers present');
+  }
+}
+__init_diagnostics__();
 </script>
 </body>
 </html>
