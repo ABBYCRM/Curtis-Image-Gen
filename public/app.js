@@ -16,7 +16,9 @@ const elements = Object.fromEntries([
   'runProgress', 'progressText', 'sceneList', 'log', 'settingsButton',
   'settingsDialog', 'openaiKeyInput', 'a2eKeyInput', 'appTokenInput',
   'saveSettingsButton', 'wipeButton', 'downloadAllImagesButton',
-  'downloadAllVideosButton', 'exportButton', 'importFile'
+  'downloadAllVideosButton', 'exportButton', 'importFile',
+  'tab-setup', 'tab-scenes', 'tab-album', 'albumCount',
+  'refreshAlbumButton', 'clearAlbumButton', 'albumGrid', 'albumSummary'
 ].map((id) => [id, document.getElementById(id)]));
 
 const state = {
@@ -212,8 +214,8 @@ function makeSceneCard(scene) {
   );
   videoButton.title = 'Uses OpenAI Sora 2 first; falls back to A2E automatically.';
   actions.append(videoButton);
-  if (scene.imageUrl) actions.append(actionButton('Download image', () => downloadDataUrl(scene.imageUrl, `scene-${scene.n}.png`), 'ghost'));
-  if (scene.videoUrl) actions.append(actionButton('Download clip', () => downloadDataUrl(scene.videoUrl, `scene-${scene.n}.mp4`, 'video/mp4'), 'ghost'));
+  if (scene.imageUrl) actions.append(actionButton('Download image', () => downloadAsset(scene.imageUrl, `scene-${scene.n}.png`, 'image/png'), 'ghost'));
+  if (scene.videoUrl) actions.append(actionButton('Download clip', () => downloadAsset(scene.videoUrl, `scene-${scene.n}.mp4`, 'video/mp4'), 'ghost'));
   actions.append(actionButton('Delete', () => {
     state.scenes = state.scenes.filter((item) => item.id !== scene.id);
     renumberScenes();
@@ -527,6 +529,20 @@ async function runSingleVideo(scene) {
     scene.videoStatus = 'done';
     log(`Scene ${scene.n}: clip complete.`, 'success');
     setBanner('ok', `Scene ${scene.n} clip ready — click Download clip.`);
+    // Save the clip to the album (best-effort).
+    try {
+      const videoResponse = await fetch(url);
+      if (videoResponse.ok) {
+        const blob = await videoResponse.blob();
+        await saveToAlbum({
+          kind: 'video', blob,
+          prompt: sceneVideoPrompt(scene),
+          title: `Scene ${scene.n} — ${scene.title}`,
+          provider: scene.videoProvider || 'openai',
+          scene_n: scene.n,
+        });
+      }
+    } catch (e) { log(`Album clip save failed: ${e.message}`, 'warn'); }
   } catch (error) {
     scene.videoStatus = 'failed';
     setBanner('bad', error.message);
@@ -579,6 +595,23 @@ async function runAllVideos() {
       scene.videoUrl = url;
       scene.videoStatus = 'done';
       log(`Scene ${scene.n}: clip complete.`, 'success');
+      // Save the clip to the album. The proxy already auto-saves
+      // successful /openai/videos responses, but we send it again from
+      // the front-end so the album stays in sync no matter which path
+      // produced the URL.
+      try {
+        const videoResponse = await fetch(url);
+        if (videoResponse.ok) {
+          const blob = await videoResponse.blob();
+          await saveToAlbum({
+            kind: 'video', blob,
+            prompt: sceneVideoPrompt(scene),
+            title: `Scene ${scene.n} — ${scene.title}`,
+            provider: scene.videoProvider || 'openai',
+            scene_n: scene.n,
+          });
+        }
+      } catch (e) { log(`Album clip save failed: ${e.message}`, 'warn'); }
     } catch (error) {
       scene.videoStatus = 'failed';
       log(`Scene ${scene.n} video failed: ${error.message}`, 'error');
@@ -628,6 +661,19 @@ async function runPipeline(scenes = state.scenes, includeVideos = elements.provi
         ? await generateOpenAIImage(scene)
         : await generateA2EImage(scene);
       scene.imageStatus = 'done';
+      // Save a copy to the album so the user can re-download it from
+      // the Album tab. Best-effort — failures here are logged but do
+      // not fail the image response.
+      try {
+        const blob = await dataUrlToBlob(scene.imageUrl);
+        await saveToAlbum({
+          kind: 'image', blob,
+          prompt: sceneImagePrompt(scene),
+          title: `Scene ${scene.n} — ${scene.title}`,
+          provider,
+          scene_n: scene.n,
+        });
+      } catch (e) { log(`Album image save failed: ${e.message}`, 'warn'); }
       completed += 1;
       setProgress(completed, operations, `Scene ${scene.n} image complete.`);
       log(`Scene ${scene.n}: image complete.`, 'success');
@@ -667,14 +713,224 @@ async function runPipeline(scenes = state.scenes, includeVideos = elements.provi
   }
 }
 
-function downloadUrl(url, filename) {
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.rel = 'noopener';
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
+// ----- Tabs -----
+function switchTab(name) {
+  if (!name) return;
+  for (const id of ['tab-setup', 'tab-scenes', 'tab-album']) {
+    const tab = elements[id];
+    const isActive = tab?.dataset.tab === name;
+    if (tab) {
+      tab.classList.toggle('active', isActive);
+      tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    }
+  }
+  for (const panel of document.querySelectorAll('[data-tab-content]')) {
+    panel.hidden = panel.dataset.tabContent !== name;
+  }
+  if (name === 'album') refreshAlbum();
+}
+
+// ----- Album -----
+// Wraps fetch with the same provider key headers the rest of the app uses.
+async function albumFetch(path, options = {}) {
+  // Album reads are public (the bytes are stored on the proxy). Writes
+  // (POST upload) need no auth — they're over the proxy, and the proxy
+  // trusts the front-end origin via CORS. If the operator later sets
+  // APP_PROXY_TOKEN we forward x-app-token so the proxy can use the
+  // env-stored keys for any provider-specific operation.
+  const credentials = readCredentials();
+  const headers = { ...(options.headers || {}) };
+  if (credentials.appToken) headers['x-app-token'] = credentials.appToken;
+  const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  if (!response.ok) {
+    let body = {};
+    try { body = await response.json(); } catch {}
+    throw new Error(body.friendly || body?.error?.message || `HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+async function refreshAlbum() {
+  if (!elements.albumGrid) return;
+  try {
+    const body = await albumFetch('/album');
+    renderAlbum(body);
+  } catch (error) {
+    elements.albumSummary.textContent = `Album unavailable: ${error.message}`;
+    elements.albumGrid.replaceChildren();
+  }
+}
+
+function renderAlbum(body) {
+  const { items = [], count = 0, total_bytes = 0, cap_entries, cap_bytes } = body;
+  // Tab badge
+  if (elements.albumCount) {
+    elements.albumCount.hidden = !count;
+    elements.albumCount.textContent = count;
+  }
+  // Summary
+  const totalMb = (total_bytes / 1024 / 1024).toFixed(1);
+  const capMb = cap_bytes ? (cap_bytes / 1024 / 1024).toFixed(0) : '?';
+  const capEnt = cap_entries || '?';
+  elements.albumSummary.textContent = count
+    ? `${count} item${count === 1 ? '' : 's'} · ${totalMb} MB of ${capMb} MB · capped at ${capEnt} entries`
+    : 'No images or clips saved yet. Generate a scene and it will appear here.';
+
+  elements.albumGrid.replaceChildren();
+  for (const item of items) elements.albumGrid.append(makeAlbumCard(item));
+}
+
+function makeAlbumCard(item) {
+  const card = document.createElement('article');
+  card.className = 'album-card';
+
+  const thumb = document.createElement('div');
+  thumb.className = 'album-thumb';
+  if (item.kind === 'video') {
+    const video = document.createElement('video');
+    video.src = `${API_BASE}${item.url}`;
+    video.muted = true;
+    video.loop = true;
+    video.playsInline = true;
+    video.preload = 'metadata';
+    video.addEventListener('mouseenter', () => video.play().catch(() => {}));
+    video.addEventListener('mouseleave', () => video.pause());
+    thumb.append(video);
+    const badge = document.createElement('span');
+    badge.className = 'album-kind';
+    badge.textContent = 'video';
+    thumb.append(badge);
+  } else {
+    const img = document.createElement('img');
+    img.src = `${API_BASE}${item.url}`;
+    img.alt = item.prompt || item.title || 'Album image';
+    img.loading = 'lazy';
+    thumb.append(img);
+    const badge = document.createElement('span');
+    badge.className = 'album-kind';
+    badge.textContent = 'image';
+    thumb.append(badge);
+  }
+  card.append(thumb);
+
+  const meta = document.createElement('div');
+  meta.className = 'album-meta';
+  const title = document.createElement('p');
+  title.className = 'album-title';
+  title.textContent = item.title || item.prompt || `${item.kind} from ${new Date(item.created_at).toLocaleString()}`;
+  meta.append(title);
+  const sub = document.createElement('p');
+  sub.className = 'album-sub muted';
+  const subBits = [];
+  if (item.provider) subBits.push(item.provider);
+  if (item.width && item.height) subBits.push(`${item.width}×${item.height}`);
+  if (item.bytes) subBits.push(`${(item.bytes / 1024 / 1024).toFixed(2)} MB`);
+  subBits.push(new Date(item.created_at).toLocaleDateString());
+  sub.textContent = subBits.join(' · ');
+  meta.append(sub);
+  card.append(meta);
+
+  const actions = document.createElement('div');
+  actions.className = 'button-row compact';
+  const ext = item.kind === 'video' ? 'mp4' : 'png';
+  const filename = `${item.title || item.kind}-${item.id}.${ext}`;
+  actions.append(actionButton('Download',
+    () => downloadAsset(`${API_BASE}${item.url}`, filename, item.mime), 'primary'));
+  actions.append(actionButton('Delete', async () => {
+    if (!confirm(`Delete this ${item.kind}?`)) return;
+    try {
+      await albumFetch(`/album/${item.id}`, { method: 'DELETE' });
+      log(`Album ${item.kind} deleted.`);
+      refreshAlbum();
+    } catch (error) {
+      setBanner('bad', `Delete failed: ${error.message}`);
+    }
+  }, 'danger'));
+  card.append(actions);
+  return card;
+}
+
+async function clearAlbum() {
+  if (!confirm('Delete every image and clip from the album? (Your saved project and keys are untouched.)')) return;
+  try {
+    const body = await albumFetch('/album', { method: 'DELETE' });
+    log(`Album cleared. ${body.deleted || 0} item(s) removed.`);
+    refreshAlbum();
+  } catch (error) {
+    setBanner('bad', `Clear failed: ${error.message}`);
+  }
+}
+
+// Save a generated asset to the album. Called from the image and video
+// completion paths. dataUrlOrBlob is the bytes we already have; if the
+// proxy already auto-saved the asset (it does, for /openai/images and
+// /openai/videos/:id/content), we still POST the bytes from the
+// front-end so the album stays in sync even if the proxy missed it.
+async function saveToAlbum({ kind, blob, prompt, title, provider, scene_n }) {
+  try {
+    const mime = kind === 'video' ? 'video/mp4' : 'image/png';
+    const params = new URLSearchParams({ kind });
+    if (prompt) params.set('prompt', prompt);
+    if (title) params.set('title', title);
+    if (provider) params.set('provider', provider);
+    if (typeof scene_n === 'number') params.set('scene_n', String(scene_n));
+    const response = await fetch(`${API_BASE}/album/upload?${params}`, {
+      method: 'POST',
+      headers: { 'Content-Type': mime },
+      body: blob,
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`);
+    }
+    const body = await response.json();
+    log(`Album: saved ${kind} (${body.id}).`);
+    refreshAlbum();
+    return body.id;
+  } catch (error) {
+    log(`Album save failed: ${error.message}`, 'warn');
+    return null;
+  }
+}
+
+// Convert a data: URL (the typical OpenAI image response) to a Blob.
+async function dataUrlToBlob(dataUrl) {
+  const res = await fetch(dataUrl);
+  return res.blob();
+}
+
+
+//   - data: URLs pass straight through
+//   - blob: URLs pass straight through
+//   - https: URLs that point back to our proxy need the same auth the
+//     front-end already has (x-openai-key / x-a2e-key), so we fetch
+//     them with the right header and wrap the result in a blob URL
+async function downloadAsset(url, filename, mime = 'application/octet-stream') {
+  try {
+    if (!url) throw new Error('No URL to download.');
+    let href = url;
+    if (/^https:\/\//.test(url) && url.includes(API_BASE)) {
+      // Same-origin via the proxy. The asset is public for reads (the
+      // proxy signs the bytes itself), but if it's the OpenAI Sora bytes
+      // route the proxy reads x-openai-key from the request, so we
+      // forward whichever provider the URL came from.
+      const provider = url.includes('/openai/') ? 'openai' : 'a2e';
+      const response = await fetch(url, { headers: providerHeaders(provider) });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const blob = await response.blob();
+      href = URL.createObjectURL(blob);
+    }
+    const anchor = document.createElement('a');
+    anchor.href = href;
+    anchor.download = filename;
+    anchor.rel = 'noopener';
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    if (href !== url) setTimeout(() => URL.revokeObjectURL(href), 1000);
+  } catch (error) {
+    setBanner('bad', `Download failed: ${error.message}`);
+  }
 }
 
 // Bulk download: iterate every scene, give each one a short delay so the
@@ -685,7 +941,7 @@ function downloadAllImages() {
   if (!scenes.length) return setBanner('warn', 'No scene images are ready yet.');
   setBanner('info', `Downloading ${scenes.length} image${scenes.length === 1 ? '' : 's'}…`);
   scenes.forEach((scene, index) => {
-    setTimeout(() => downloadUrl(scene.imageUrl, `scene-${scene.n}.png`), index * 200);
+    setTimeout(() => downloadAsset(scene.imageUrl, `scene-${scene.n}.png`, 'image/png'), index * 200);
   });
 }
 
@@ -694,7 +950,7 @@ function downloadAllVideos() {
   if (!scenes.length) return setBanner('warn', 'No scene clips are ready yet.');
   setBanner('info', `Downloading ${scenes.length} clip${scenes.length === 1 ? '' : 's'}…`);
   scenes.forEach((scene, index) => {
-    setTimeout(() => downloadUrl(scene.videoUrl, `scene-${scene.n}.mp4`), index * 200);
+    setTimeout(() => downloadAsset(scene.videoUrl, `scene-${scene.n}.mp4`, 'video/mp4'), index * 200);
   });
 }
 
@@ -854,6 +1110,13 @@ function wireEvents() {
     const file = elements.importFile.files?.[0];
     if (file) importProject(file);
   });
+  // Tabs
+  for (const tab of [elements['tab-setup'], elements['tab-scenes'], elements['tab-album']]) {
+    if (tab) tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+  }
+  // Album
+  elements.refreshAlbumButton.addEventListener('click', () => refreshAlbum());
+  elements.clearAlbumButton.addEventListener('click', () => clearAlbum());
 }
 
 function init() {
@@ -863,6 +1126,8 @@ function init() {
   elements.appTokenInput.value = credentials.appToken || '';
   wireEvents();
   loadProject();
+  switchTab('setup');
+  refreshAlbum();
   renderReference();
   renderScenes();
   updateGenerateLabel();

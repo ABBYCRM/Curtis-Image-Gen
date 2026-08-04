@@ -18,8 +18,14 @@
     <div id="connectionPill" class="pill checking" role="status">Checking proxy…</div>
   </header>
 
+  <nav class="tabbar" role="tablist" aria-label="Sections">
+    <button class="tab active" role="tab" aria-selected="true" data-tab="setup" id="tab-setup">Setup</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="scenes" id="tab-scenes">Scenes</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="album" id="tab-album">Album <span id="albumCount" class="tab-count" hidden></span></button>
+  </nav>
+
   <main class="layout">
-    <section class="panel setup-panel" aria-labelledby="setupTitle">
+    <section class="panel setup-panel" data-tab-content="setup" aria-labelledby="setupTitle">
       <div class="panel-heading">
         <div>
           <p class="eyebrow">Setup</p>
@@ -109,7 +115,7 @@
       </div>
     </section>
 
-    <section class="panel workspace-panel" aria-labelledby="workspaceTitle">
+    <section class="panel workspace-panel" data-tab-content="scenes" hidden aria-labelledby="workspaceTitle">
       <div class="panel-heading">
         <div>
           <p class="eyebrow">Workspace</p>
@@ -130,6 +136,21 @@
         <h3>Run log</h3>
         <div id="log" class="log" aria-live="polite"></div>
       </div>
+    </section>
+
+    <section class="panel album-panel" data-tab-content="album" hidden aria-labelledby="albumTitle">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">Album</p>
+          <h2 id="albumTitle">Every image and clip you've generated</h2>
+        </div>
+        <div class="button-row compact">
+          <button id="refreshAlbumButton" class="button ghost small" type="button">Refresh</button>
+          <button id="clearAlbumButton" class="button danger small" type="button">Clear album</button>
+        </div>
+      </div>
+      <p class="muted" id="albumSummary">Loading…</p>
+      <div id="albumGrid" class="album-grid" aria-live="polite"></div>
     </section>
   </main>
 
