@@ -1212,10 +1212,10 @@ const PROVIDERS = {
       return document.getElementById('endpoint')?.value?.trim() || this.defaultEndpoint;
     },
     _headers(){
-      // The proxy doesn't need an Authorization header from the browser —
-      // it injects the key from its env var. We send a hint header so the
-      // proxy knows which provider to route to.
-      return { "Content-Type": "application/json", "X-Provider": "openai" };
+      // authHeaders() reads the per-provider keys from the Settings-tab
+      // inputs and packs them into x-a2e-key / x-openai-key / x-gemini-key
+      // headers. The proxy then forwards whichever matches the route.
+      return authHeaders();
     },
   },
 
