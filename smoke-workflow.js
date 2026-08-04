@@ -68,8 +68,14 @@ const URL = 'https://curtis-image-gen.onrender.com/?t=' + Date.now();
     return b ? { text: b.textContent.trim().slice(0, 200), cls: b.className } : null;
   });
   console.log('  banner after no-ref click:', JSON.stringify(bannerAfterNoRef));
-  if(!bannerAfterNoRef || (!bannerAfterNoRef.text.includes('photo') && !bannerAfterNoRef.text.includes('Step 1'))) {
-    throw new Error('Banner should say Step 1 (drop a face photo). Got: ' + JSON.stringify(bannerAfterNoRef));
+  // The button now validates input first; with no ref and no script
+  // it should show a clear error banner ("No scenes yet" or similar),
+  // not silently no-op. The new makeTrailer behavior is correct.
+  if(!bannerAfterNoRef || !bannerAfterNoRef.text.match(/scenes|reference|script|photo/i)) {
+    throw new Error('Banner should mention missing input. Got: ' + JSON.stringify(bannerAfterNoRef));
+  }
+  if(!bannerAfterNoRef.cls.includes('bad')) {
+    throw new Error('Banner should be marked bad (red) on validation error. Got: ' + bannerAfterNoRef.cls);
   }
   await page.screenshot({ path: '/tmp/wf-1-no-ref.png' });
 
