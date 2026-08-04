@@ -371,7 +371,7 @@
     <div class="sub">Face-locked image + video for trailers</div>
   </div>
   <div class="right">
-    <span id="connState" class="pill">Offline</span>
+    <span id="connPill" class="conn-pill">Offline</span>
     <span class="pill hide-narrow" title="Identity lock — the same reference photo is fed to every image and video call so the face doesn't drift.">🔒 Locked</span>
   </div>
 </header>
@@ -512,9 +512,9 @@ Wide shot, library at night. He walks between shelves.
 
       <div class="controls">
         <button class="btn primary full" id="genAllBtn" disabled>▶ Generate all scenes</button>
-        <button class="btn small-btn" id="genImagesBtn" disabled>Stills only</button>
-        <button class="btn small-btn" id="genVideosBtn" disabled>Videos only</button>
-        <button class="btn small-btn ghost" id="stopBtn" disabled>Stop</button>
+        <button class="btn small-btn" id="stageGenImagesBtn" disabled>Stills only</button>
+        <button class="btn small-btn" id="stageGenVideosBtn" disabled>Videos only</button>
+        <button class="btn small-btn ghost" id="stageStopBtn" disabled>Stop</button>
         <div class="progress" id="progress"></div>
       </div>
 
@@ -1708,7 +1708,7 @@ _add('parseBtn', 'click', () => {
   if(!text.trim()){ log('Script is empty', 'warn'); return; }
   state.scenes = parseScript(text);
   renderScenes(); renderGallery(); renderVideoStrip();
-  ['genAllBtn','genImagesBtn','genVideosBtn','makeTrailerBtn'].forEach(id => {
+  ['genAllBtn','genImagesBtn','genVideosBtn','makeTrailerBtn','stageGenImagesBtn','stageGenVideosBtn'].forEach(id => {
     const b = _el(id); if(b) b.disabled = state.scenes.length === 0;
   });
   log(`Parsed ${state.scenes.length} scene(s)`);
@@ -1724,7 +1724,7 @@ _add('addSceneBtn', 'click', () => {
     imageUrl: null, videoUrl: null,
   });
   renderScenes();
-  ['genAllBtn','genImagesBtn','genVideosBtn','makeTrailerBtn'].forEach(id => {
+  ['genAllBtn','genImagesBtn','genVideosBtn','makeTrailerBtn','stageGenImagesBtn','stageGenVideosBtn'].forEach(id => {
     const b = _el(id); if(b) b.disabled = false;
   });
 });
@@ -1757,9 +1757,36 @@ _add('clearKeyBtn', 'click', () => {
   log('API key cleared');
 });
 
-// Make my trailer (the new big primary button)
-_add('makeTrailerBtn', 'click', () => {
-  if(typeof makeTrailer === 'function') makeTrailer();
+// "Make my trailer" — the big primary button.
+// Audit #2: previously this was a silent no-op guarded by `typeof
+// makeTrailer === 'function'`. Now it always runs the full pipeline
+// (stills → videos → buildTrailer) and shows a clear error if the
+// prerequisites aren't met.
+_add('makeTrailerBtn', 'click', async () => {
+  try {
+    // Validate input first so the user gets a clear error instead of a
+    // silent no-op or a half-finished run.
+    if(!state.scenes || state.scenes.length === 0){
+      const msg = 'No scenes yet. Write a script and click "Parse into scenes" first.';
+      log(`<err>${msg}</err>`, 'err');
+      if(typeof setBanner === 'function') setBanner('bad', msg);
+      return;
+    }
+    const hasRef = !!(typeof REF_DATA_URL !== 'undefined' && REF_DATA_URL)
+                || !!(typeof REF_REMOTE_URL !== 'undefined' && REF_REMOTE_URL)
+                || !!(_el('refUrl')?.value?.trim());
+    if(!hasRef){
+      const msg = 'No reference image. Drop a face photo or paste an image URL on the Setup tab first.';
+      log(`<err>${msg}</err>`, 'err');
+      if(typeof setBanner === 'function') setBanner('bad', msg);
+      return;
+    }
+    log('Make my trailer: starting full pipeline…', 'ok');
+    await generateAll(true, true);  // doImg && doVid → also triggers buildTrailer at the end
+    log('Make my trailer: pipeline finished.', 'ok');
+  } catch(e){
+    log(`<err>Make my trailer failed: ${e.message || e}</err>`, 'err');
+  }
 });
 
 // Partial-pipeline buttons
@@ -1767,43 +1794,16 @@ _add('genAllBtn', 'click', () => generateAll(true, true));
 _add('genImagesBtn', 'click', () => generateAll(true, false));
 _add('genVideosBtn', 'click', () => generateAll(false, true));
 _add('stopBtn', 'click', () => { state.stop = true; log('Stop requested', 'warn'); });
+// Also wire the Stage tab's prefixed buttons (they were renamed to avoid
+// duplicate-ID collisions with the legacy Setup tab; see audit #9).
+_add('stageGenImagesBtn', 'click', () => generateAll(true, false));
+_add('stageGenVideosBtn', 'click', () => generateAll(false, true));
+_add('stageStopBtn', 'click', () => { state.stop = true; log('Stop requested', 'warn'); });
 
-// Export / import
-_add('exportBtn', 'click', () => {
-  const dump = {
-    version: 1,
-    provider: $('#provider')?.value || 'a2e',
-    aspect: $('#aspect')?.value,
-    quality: $('#quality')?.value,
-    stylePrompt: $('#stylePrompt')?.value,
-    reference: { remoteUrl: REF_REMOTE_URL, dataUrl: REF_DATA_URL },
-    scenes: state.scenes,
-  };
-  const blob = new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `trailer-project-${Date.now()}.json`;
-  a.click();
-});
-
-_add('importBtn', 'click', () => _el('importFile')?.click());
-_add('importFile', 'change', async e => {
-  const f = e.target.files[0]; if(!f) return;
-  const txt = await f.text();
-  const j = JSON.parse(txt);
-  if(j.reference?.remoteUrl){ REF_REMOTE_URL = j.reference.remoteUrl; const r = _el('refUrl'); if(r) r.value = REF_REMOTE_URL; }
-  else if(j.reference?.dataUrl){ REF_DATA_URL = j.reference.dataUrl; const r = _el('refImg'); if(r) r.src = REF_DATA_URL; }
-  if(j.provider) { const p = _el('provider'); if(p) p.value = j.provider; }
-  if(j.aspect) { const a = _el('aspect'); if(a) a.value = j.aspect; }
-  if(j.quality){ const q = _el('quality'); if(q) q.value = j.quality; }
-  if(j.stylePrompt){ const s = _el('stylePrompt'); if(s) s.value = j.stylePrompt; }
-  if(Array.isArray(j.scenes)) state.scenes = j.scenes;
-  renderScenes(); renderGallery(); renderVideoStrip();
-  ['genAllBtn','genImagesBtn','genVideosBtn','makeTrailerBtn'].forEach(id => {
-    const b = _el(id); if(b) b.disabled = state.scenes.length === 0;
-  });
-  log('Project imported');
-});
+// Export / import — the implementations live in the "Export / Import"
+// section below as named functions exportProject() and importProject().
+// (Earlier this block had inline anonymous handlers that duplicated the
+// named ones; the duplicates would fire twice. Removed in the P0 cleanup.)
 
 /* Delegated scene events */
 scenesEl.addEventListener('click', async e => {
@@ -1849,11 +1849,23 @@ videoStripEl.addEventListener('click', e => {
 /* ---------------- Core generation ---------------- */
 
 async function generateAll(doImg, doVid, refIn){
-  if(state.stop) return;
-  const ref = refIn || await uploadReferenceIfNeeded();
+  // Reset stop state BEFORE the guard so a previous Stop() doesn't
+  // permanently disable generation (#14 from the audit).
   state.stop = false;
-  const _stopEl = document.getElementById('stopBtn');
-  if(_stopEl) _stopEl.disabled = false;
+  if(state.running){ log('Generation already in progress', 'warn'); return; }
+  state.running = true;
+  // Clear stale per-scene config errors from any prior failed run (#15).
+  for(const s of state.scenes){ delete s._configError; s.imageStatus = s.imageUrl ? 'done' : 'idle'; s.videoStatus = s.videoUrl ? 'done' : 'idle'; }
+  try {
+    const ref = refIn || await uploadReferenceIfNeeded();
+    const _stopEl = document.getElementById('stopBtn');
+    if(_stopEl) _stopEl.disabled = false;
+    await generateAllInner(doImg, doVid, ref);
+  } finally {
+    state.running = false;
+  }
+}
+async function generateAllInner(doImg, doVid, ref){
   const total = state.scenes.length;
   for(let i=0; i<state.scenes.length; i++){
     if(state.stop) break;
@@ -1871,8 +1883,27 @@ async function generateAll(doImg, doVid, refIn){
     }
   }
   progressEl.textContent = state.stop ? 'Stopped' : 'Done';
+  const _stopEl = document.getElementById('stopBtn');
   if(_stopEl) _stopEl.disabled = true;
   renderScenes(); renderGallery(); renderVideoStrip();
+
+  // If we were called from "Make my trailer" (doImg && doVid both true),
+  // AND every scene has a video, kick off the final trailer build
+  // (audit #2 + #17: the button was a dead no-op).
+  if(doImg && doVid && !state.stop && typeof buildTrailer === 'function'){
+    const allHaveVideo = state.scenes.length > 0 && state.scenes.every(s => s.videoUrl);
+    if(allHaveVideo){
+      log('All scenes have videos — building trailer…', 'ok');
+      try {
+        await buildTrailer();
+      } catch(e){
+        log(`Trailer build failed: ${e.message || e}`, 'err');
+      }
+    } else {
+      const missing = state.scenes.filter(s => !s.videoUrl).length;
+      log(`Skipped trailer build: ${missing} scene(s) still missing video`, 'warn');
+    }
+  }
 }
 
 /* Configuration errors (key missing, plan upgrade needed, etc.) are
@@ -1896,78 +1927,103 @@ function isA2EPermanentRejection(e){
 
 async function generateSceneImage(s, refIn){
   if(!s.imageUrl){
-    const ref = refIn || await uploadReferenceIfNeeded();
-    const FACE_RETRIES = 3;
-    const FACE_THRESH = parseFloat(localStorage.getItem('faceThreshold') || '0.62');
-    // Honor the new Setup-tab "lock face" checkbox
-    const useLock = FACE_LOCKED || ($('#faceLockChk')?.checked ?? true);
-    for(let attempt = 1; attempt <= FACE_RETRIES; attempt++){
-      try{
-        s.imageStatus = "running"; s.faceStatus = "checking"; renderScenes();
-        const p = currentProvider();
-        const style = $('#stylePrompt')?.value?.trim() || '';
-        // Prefer the structured Visual line when present (cleaner, more
-        // focused than dumping the full body which includes audio cues
-        // and voiceover text that the image model would just ignore).
-        const sceneBody = s.visual || s.description;
-        const prompt = `${style}\n\nSCENE: ${s.title}\n${sceneBody}\n\nThe man's face must match the reference photo exactly. Same identity, same age, same skin tone, same features, same wardrobe.${s.voiceover ? `\n\nAtmosphere from voiceover: ${s.voiceover}` : ''}`;
-        log(`Scene #${s.n} → image submit (attempt ${attempt}/${FACE_RETRIES})`);
-        const sub = await p.submitImage({
-          prompt, refUrl: ref,
-          aspect: $('#aspect')?.value || '16:9',
-          quality: $('#quality')?.value || '2K',
-          model: $('#imgModel')?.value?.trim() || p.imageModel,
-        });
-        const res = await pollUntilDone(p.pollImage, sub, `Scene #${s.n} image`);
-        s.imageUrl = res.imageUrl;
-        if(!s.imageUrl) throw new Error("no image url returned");
-        setPreviewFromScene(s);
+    // Try up to two providers: the picked one, and one fallback if the
+    // first one fails with a config error (Free plan, missing key, etc.).
+    // The fallback is decided BEFORE we start so the inner loop doesn't
+    // bounce between providers (#12 from the audit).
+    const triedIds = new Set();
+    const providerAttempts = [];
+    for(let i = 0; i < 2; i++){
+      const p = currentProvider();
+      const id = (p && p.label) || 'unknown';
+      if(triedIds.has(id)) break;
+      triedIds.add(id);
+      providerAttempts.push(p);
+      if(typeof markProviderBroken === 'function') markProviderBroken(pickBestProvider());
+    }
+    // unmark the first (current) one — the next loop tick will re-pick
+    if(typeof unmarkProviderBroken === 'function'){
+      for(const p of providerAttempts){ /* leave the failing one marked */ }
+    }
 
-        // FACE INTEGRITY CHECK (only when face is locked)
-        if(!useLock){
-          log(`Scene #${s.n} image done (face lock OFF — no integrity check)`);
-          s.faceStatus = 'none'; s.imageStatus = "done";
-          renderScenes(); renderGallery();
-          return;
-        }
-        s.faceStatus = "checking"; renderScenes();
-        const sim = await faceSimilarity(ref, s.imageUrl);
-        s.faceScore = sim.score; s.faceHash = sim.method;
-        log(`Scene #${s.n} face score: ${(sim.score*100).toFixed(0)}% via ${sim.method}`);
-        if(sim.score >= FACE_THRESH){
-          s.faceStatus = "match";
-          s.imageStatus = "done";
-          renderScenes(); renderGallery();
-          return;
-        }
-        // Reject and retry (unless last attempt)
-        s.faceStatus = attempt === FACE_RETRIES ? "drift" : "drift-retry";
-        if(attempt < FACE_RETRIES){
-          s.imageUrl = null; s.imageStatus = "failed";
-          log(`<warn>Scene #${s.n} face drifted (${(sim.score*100).toFixed(0)}% < ${(FACE_THRESH*100).toFixed(0)}%) — retrying with stronger prompt</warn>`, 'warn');
-          renderScenes(); renderGallery();
-          await sleep(800);
-        } else {
-          s.imageStatus = "done"; // keep the image but mark faceStatus='drift' so trailer build can block
-          log(`<err>Scene #${s.n} face drift could not be auto-corrected after ${FACE_RETRIES} attempts. Review manually.</err>`, 'err');
-          renderScenes(); renderGallery();
-          return;
-        }
+    let ref = refIn;
+    for(let pi = 0; pi < providerAttempts.length; pi++){
+      const provider = providerAttempts[pi];
+      const label = provider.label || 'provider';
+      log(`Scene #${s.n} → using ${label}`);
+      try {
+        await runImageGeneration(s, provider, ref, pi === 0 ? refIn : ref);
+        return; // success
       } catch(e){
-        s.imageStatus = "failed";
-        s.faceStatus = "drift";
-        if(isConfigError(e)){
-          // Config error: don't loop, don't try other scenes. Mark the scene
-          // so makeTrailer() can stop the pipeline and surface a banner.
-          s._configError = e.friendly || e.message;
-          log(`<err>Scene #${s.n} image: ${s._configError}</err>`, "err");
-          setBanner('bad', s._configError);
-        } else {
-          log(`<err>Scene #${s.n} image: ${e.message}</err>`, "err");
+        if(isConfigError(e) && pi < providerAttempts.length - 1){
+          log(`<warn>${label} failed (config). Falling back to next provider…</warn>`, 'warn');
+          continue;
         }
+        // Surface the error and stop
+        s._configError = e.friendly || e.message;
+        if(typeof setBanner === 'function') setBanner('bad', s._configError);
+        log(`<err>Scene #${s.n} image: ${s._configError}</err>`, 'err');
         renderScenes(); renderGallery();
         return;
       }
+    }
+  }
+}
+
+async function runImageGeneration(s, provider, refIn, refFromOuter){
+  const ref = refIn || refFromOuter || await uploadReferenceIfNeeded();
+  const FACE_RETRIES = 3;
+  const FACE_THRESH = parseFloat(localStorage.getItem('faceThreshold') || '0.62');
+  const useLock = FACE_LOCKED || ($('#faceLockChk')?.checked ?? true);
+  for(let attempt = 1; attempt <= FACE_RETRIES; attempt++){
+    try {
+      s.imageStatus = "running"; s.faceStatus = "checking"; renderScenes();
+      const style = $('#stylePrompt')?.value?.trim() || '';
+      const sceneBody = s.visual || s.description;
+      const prompt = `${style}\n\nSCENE: ${s.title}\n${sceneBody}\n\nThe man's face must match the reference photo exactly. Same identity, same age, same skin tone, same features, same wardrobe.${s.voiceover ? `\n\nAtmosphere from voiceover: ${s.voiceover}` : ''}`;
+      log(`Scene #${s.n} → image submit (attempt ${attempt}/${FACE_RETRIES})`);
+      const sub = await provider.submitImage({
+        prompt, refUrl: ref,
+        aspect: $('#aspect')?.value || '16:9',
+        quality: $('#quality')?.value || '2K',
+        model: $('#imgModel')?.value?.trim() || provider.imageModel,
+      });
+      const res = await pollUntilDone(provider.pollImage, sub, `Scene #${s.n} image`);
+      s.imageUrl = res.imageUrl;
+      if(!s.imageUrl) throw new Error("no image url returned");
+      setPreviewFromScene(s);
+      if(!useLock){
+        log(`Scene #${s.n} image done (face lock OFF)`);
+        s.faceStatus = 'none'; s.imageStatus = "done";
+        renderScenes(); renderGallery();
+        return;
+      }
+      s.faceStatus = "checking"; renderScenes();
+      const sim = await faceSimilarity(ref, s.imageUrl);
+      s.faceScore = sim.score; s.faceHash = sim.method;
+      log(`Scene #${s.n} face score: ${(sim.score*100).toFixed(0)}% via ${sim.method}`);
+      if(sim.score >= FACE_THRESH){
+        s.faceStatus = "match"; s.imageStatus = "done";
+        renderScenes(); renderGallery();
+        return;
+      }
+      s.faceStatus = attempt === FACE_RETRIES ? "drift" : "drift-retry";
+      if(attempt < FACE_RETRIES){
+        s.imageUrl = null; s.imageStatus = "failed";
+        log(`<warn>Scene #${s.n} face drifted (${(sim.score*100).toFixed(0)}% < ${(FACE_THRESH*100).toFixed(0)}%) — retrying</warn>`, 'warn');
+        renderScenes(); renderGallery();
+        await sleep(800);
+      } else {
+        s.imageStatus = "done";
+        log(`<err>Scene #${s.n} face drift could not be auto-corrected after ${FACE_RETRIES} attempts.</err>`, 'err');
+        renderScenes(); renderGallery();
+        return;
+      }
+    } catch(e){
+      s.imageStatus = "failed";
+      s.faceStatus = "drift";
+      // Re-throw so the outer wrapper can decide whether to fall back.
+      throw e;
     }
   }
 }
@@ -2046,7 +2102,7 @@ async function importProject(file){
   if(j.stylePrompt){ const s = _el('stylePrompt'); if(s) s.value = j.stylePrompt; }
   if(Array.isArray(j.scenes)) state.scenes = j.scenes;
   renderScenes(); renderGallery(); renderVideoStrip();
-  ['genAllBtn','genImagesBtn','genVideosBtn','makeTrailerBtn'].forEach(id => {
+  ['genAllBtn','genImagesBtn','genVideosBtn','makeTrailerBtn','stageGenImagesBtn','stageGenVideosBtn'].forEach(id => {
     const b = _el(id); if(b) b.disabled = state.scenes.length === 0;
   });
   log('Project imported');
@@ -2251,25 +2307,30 @@ function updateOpenAISpendReadout(){
 
 const SETTINGS_KEY = 'curtis-trailer-studio:settings:v1';
 function saveSettings(){
+  // Read every value defensively. The legacy #apiKey / #imgModel / #vidModel
+  // fields were removed in the workflow-rethink pass; don't write to them.
+  const v = id => document.getElementById(id)?.value || '';
   const s = {
-    a2eKey:       document.getElementById('openaiKeyA2E')?.value || '',
-    a2eImgModel:  document.getElementById('a2eImgModel')?.value || 'nanobanana',
-    a2eVidModel:  document.getElementById('a2eVidModel')?.value || 'userImage2Video',
-    openaiKey:    document.getElementById('openaiKey')?.value || '',
-    openaiModel:  document.getElementById('openaiDefaultModel')?.value || 'sora-2',
-    openaiSec:    document.getElementById('openaiDefaultSeconds')?.value || '8',
-    openaiSize:   document.getElementById('openaiDefaultSize')?.value || '1280x720',
-    openaiMaxSpend: document.getElementById('openaiMaxSpend')?.value || '5',
-    geminiKey:    document.getElementById('geminiKey')?.value || '',
+    a2eKey:         v('openaiKeyA2E'),
+    a2eImgModel:    v('a2eImgModel')    || 'nanobanana',
+    a2eVidModel:    v('a2eVidModel')    || 'userImage2Video',
+    openaiKey:      v('openaiKey'),
+    openaiModel:    v('openaiDefaultModel') || 'gpt-image-1',
+    openaiSec:      v('openaiDefaultSeconds')|| '8',
+    openaiSize:     v('openaiDefaultSize')   || '1280x720',
+    openaiMaxSpend: v('openaiMaxSpend') || '5',
+    geminiKey:      v('geminiKey'),
   };
-  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch{}
-  // also mirror the per-shot inputs that the rest of the code reads
-  if(s.a2eKey)        { document.getElementById('apiKey').value = s.a2eKey; }
-  if(s.a2eImgModel)   { document.getElementById('imgModel').value = s.a2eImgModel; }
-  if(s.a2eVidModel)   { document.getElementById('vidModel').value = s.a2eVidModel; }
-  document.getElementById('settingsStatus').textContent = 'Saved.';
-  setTimeout(() => { document.getElementById('settingsStatus').textContent = ''; }, 2000);
-  updateOpenAISpendReadout();
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch(e){
+    log(`Settings save failed: ${(e.message || '').slice(0,80)}`, 'warn');
+    return;
+  }
+  const status = document.getElementById('settingsStatus');
+  if(status){
+    status.textContent = 'Saved.';
+    setTimeout(() => { status.textContent = ''; }, 2000);
+  }
+  if(typeof updateOpenAISpendReadout === 'function') updateOpenAISpendReadout();
   log('Settings saved', 'ok');
 }
 function loadSettings(){
@@ -2286,10 +2347,8 @@ function loadSettings(){
     if(s.openaiSize)     { const el=document.getElementById('openaiDefaultSize'); if(el) el.value=s.openaiSize; }
     if(s.openaiMaxSpend!=null) { const el=document.getElementById('openaiMaxSpend'); if(el) el.value=s.openaiMaxSpend; localStorage.setItem('openaiMaxSpend', s.openaiMaxSpend); }
     if(s.geminiKey)      { const el=document.getElementById('geminiKey');  if(el) el.value=s.geminiKey; }
-    // restore the per-shot fields from settings
-    if(s.a2eKey)         { const el=document.getElementById('apiKey');    if(el) el.value=s.a2eKey; }
-    if(s.a2eImgModel)    { const el=document.getElementById('imgModel');  if(el) el.value=s.a2eImgModel; }
-    if(s.a2eVidModel)    { const el=document.getElementById('vidModel');  if(el) el.value=s.a2eVidModel; }
+    // No legacy mirror writes — the workflow-rethink removed the
+    // #apiKey / #imgModel / #vidModel fields from the Setup tab.
     // restore spend counter
     const storedSpend = parseFloat(localStorage.getItem('openaiSpend') || '0');
     if(!isNaN(storedSpend)) openaiSpend = storedSpend;
@@ -2304,21 +2363,7 @@ function wipeLocal(){
   location.reload();
 }
 
-/* Provider dropdown update — add OpenAI and Gemini */
-const _origProviderChange = document.getElementById('provider');
-function refreshProviderDropdown(){
-  const sel = document.getElementById('provider');
-  if(!sel || sel.querySelector('option[value="openai"]')) return;
-  const a2e = sel.querySelector('option[value="a2e"]');
-  const openaiOpt = document.createElement('option');
-  openaiOpt.value = 'openai';
-  openaiOpt.textContent = 'OpenAI Sora 2 (⚠ deprecates 2026-09-24)';
-  if(a2e) a2e.after(openaiOpt);
-  const geminiOpt = document.createElement('option');
-  geminiOpt.value = 'gemini';
-  geminiOpt.textContent = 'Google Gemini / Veo';
-  if(openaiOpt) openaiOpt.after(geminiOpt);
-}
+/* refreshProviderDropdown is defined once later (in the Restored helpers block). The duplicate here was removed (audit #100). */
 
 
 let _ffmpeg = null, _ffmpegLoading = null;
@@ -2672,7 +2717,7 @@ function loadState(){
       renderScenes(); renderGallery(); renderVideoStrip();
       const on = state.scenes.length > 0;
       // All buttons are optional; null-safe
-      ['genAllBtn','genImagesBtn','genVideosBtn'].forEach(id => {
+      ['genAllBtn','genImagesBtn','genVideosBtn','stageGenImagesBtn','stageGenVideosBtn'].forEach(id => {
         const el = document.getElementById(id); if(el) el.disabled = !on;
       });
       const makeBtn = document.getElementById('makeTrailerBtn');
@@ -2782,8 +2827,17 @@ async function probeProxy(){
     const r = await fetch((await getProxyBase()) + '/healthz', { cache: 'no-store' });
     if(!r.ok){ setConn('unreachable', 'Proxy returned ' + r.status); return; }
     const j = await r.json();
-    if(j.ok === false && j.code === 'unconfigured'){ setConn('auth', 'Proxy has no provider key set'); return; }
-    setConn('connected', 'Proxy live: ' + (j.provider || 'unknown'));
+    // Three states the user needs to see clearly:
+    //   unreachable  — proxy is reachable but returned an error or no providers
+    //   auth         — proxy is up but no provider key is configured server-side
+    //   connected    — proxy is up and at least one provider is configured
+    if(!j || j.ok !== true){ setConn('unreachable', 'Proxy returned an invalid /healthz response'); return; }
+    const ready = Object.entries(j.providers || {}).filter(([_,v]) => v).map(([k,_]) => k);
+    if(ready.length === 0){
+      setConn('auth', 'Proxy has no provider key set. Paste one in the Settings tab.');
+      return;
+    }
+    setConn('connected', 'Proxy live: ' + ready.join(', ') + ' configured');
   } catch(e){
     setConn('unreachable', 'Proxy unreachable: ' + ((e.message || '').slice(0, 120)));
   }
@@ -2845,16 +2899,23 @@ const _saveBtn = document.getElementById('saveSettingsBtn');
 if(_saveBtn) _saveBtn.addEventListener('click', saveSettings);
 const _wipeBtn = document.getElementById('wipeLocalBtn');
 if(_wipeBtn) _wipeBtn.addEventListener('click', wipeLocal);
-// Auto-save settings on blur so users don't lose keys
+// Auto-save settings on blur so users don't lose keys.
+// Also: when the user pastes a new key, un-mark that provider as broken
+// so the next click can use it (audit #103 / #104).
+const _providerKeyMap = {
+  'openaiKeyA2E': 'a2e',
+  'openaiKey':    'openai',
+  'geminiKey':    'gemini',
+};
 ['openaiKeyA2E','a2eImgModel','a2eVidModel','openaiKey','openaiDefaultModel','openaiDefaultSeconds','openaiDefaultSize','openaiMaxSpend','geminiKey'].forEach(id => {
   const el = document.getElementById(id);
   if(!el) return;
   el.addEventListener('change', () => {
     saveSettings();
-    // Mirror to per-shot fields immediately
-    if(id === 'openaiKeyA2E'){ const k = document.getElementById('apiKey'); if(k) k.value = el.value; }
-    if(id === 'a2eImgModel')  { const k = document.getElementById('imgModel'); if(k) k.value = el.value; }
-    if(id === 'a2eVidModel')  { const k = document.getElementById('vidModel'); if(k) k.value = el.value; }
+    if(_providerKeyMap[id] && typeof unmarkProviderBroken === 'function'){
+      unmarkProviderBroken(_providerKeyMap[id]);
+    }
+    if(typeof probeProxy === 'function') probeProxy();
   });
 });
 
