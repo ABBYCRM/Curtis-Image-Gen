@@ -757,7 +757,15 @@ const PROVIDERS = {
         aspectRatio: aspect || "16:9",
         resolution: quality || "2K",
       };
-      return postJson(this._endpoint() + "/a2e", body, this._headers());
+      try {
+        return await postJson(this._endpoint() + "/a2e", body, this._headers());
+      } catch(e){
+        // If A2E says "Free plan" / 403 / auth, mark it broken so
+        // pickBestProvider() falls through to OpenAI for the rest of the
+        // session. Don't mark transient (5xx, network) errors as broken.
+        if(isA2EPermanentRejection(e)) markProviderBroken('a2e');
+        throw e;
+      }
     },
     async pollImage({pollUrl, headers, raw}) {
       // The proxy expects POST /a2e/status with {kind, id}
@@ -784,10 +792,15 @@ const PROVIDERS = {
         name: "trailer-clip-" + Date.now(),
         image_url: refUrl,                       // <-- FACE LOCK
         prompt: `${script}\nLooking at the camera. Detailed eyes, clear features, still background, no camera movement.`,
-        negative_prompt: "six fingers, bad hands, lowres, low quality, worst quality, moving camera, deformed face, blurry",
+        negative_prompt: "six fingers, bad hands, lowres, low quality, worst quality, deformed face, blurry",
         aspectRatio: aspect || "16:9",
       };
-      return postJson(this._endpoint() + "/a2e", body, this._headers());
+      try {
+        return await postJson(this._endpoint() + "/a2e", body, this._headers());
+      } catch(e){
+        if(isA2EPermanentRejection(e)) markProviderBroken('a2e');
+        throw e;
+      }
     },
     async pollVideo({pollUrl, headers, raw}) {
       if(!pollUrl){ return { status:"done", videoUrl: raw?.data?.result_url }; }
@@ -1233,21 +1246,19 @@ const PROVIDERS = {
 /* ---------------- Shared HTTP helpers ---------------- */
 
 function authHeaders(){
-  // Legacy #apiKey + #provider fields don't exist on the new Setup tab —
-  // they lived there in the old flow. Read the equivalent values from
-  // wherever they DO exist (Settings tab + a mirrored copy that the
-  // Settings tab writes back to #apiKey when it can).
-  const k = (document.getElementById('apiKey')?.value
-          || document.getElementById('openaiKeyA2E')?.value
-          || '').trim();
-  const p = document.getElementById('provider')?.value || pickBestProvider();
+  // The proxy accepts per-provider keys via custom headers (x-a2e-key,
+  // x-openai-key, x-gemini-key) and forwards whichever matches the route.
+  // We send ALL of them on every call so the operator can switch providers
+  // without round-tripping through Save Settings.
+  const a2eKey    = (_el('openaiKeyA2E')?.value
+                  || _el('apiKey')?.value          // legacy mirror
+                  || '').trim();
+  const openaiKey = (_el('openaiKey')?.value || '').trim();
+  const geminiKey = (_el('geminiKey')?.value || '').trim();
   const h = { "Content-Type":"application/json" };
-  if(!k) return h;
-  if(p === "replicate") h["Authorization"] = `Token ${k}`;
-  else if(p === "fal-hedra") h["Authorization"] = `Key ${k}`;
-  else if(p === "openai") h["Authorization"] = `Bearer ${k}`;
-  else if(p === "gemini") h["x-goog-api-key"] = k;
-  else h["Authorization"] = `Bearer ${k}`;
+  if(a2eKey)    h["x-a2e-key"]    = a2eKey;
+  if(openaiKey) h["x-openai-key"] = openaiKey;
+  if(geminiKey) h["x-gemini-key"] = geminiKey;
   return h;
 }
 
@@ -1835,6 +1846,17 @@ async function generateAll(doImg, doVid, refIn){
    pipeline can stop instead of auto-retrying. */
 function isConfigError(e){
   return e && (e.configError === true || (e.friendly && e.friendly.length > 0));
+}
+function isA2EPermanentRejection(e){
+  // 403 / "Free plan" / 401 / "invalid token" → not a transient outage,
+  // mark the provider broken so pickBestProvider() falls through.
+  // 5xx, network timeouts, and "unreachable" are transient — DON'T mark.
+  if(!e) return false;
+  if(e.configError === true) {
+    const f = (e.friendly || '').toLowerCase();
+    return /free|plan|upgrade|auth|key|token|forbidden|invalid/i.test(f);
+  }
+  return false;
 }
 
 async function generateSceneImage(s, refIn){
@@ -2658,12 +2680,38 @@ if(_scenesEl){
 let FACE_LOCKED = false;
 const STORAGE_KEY = 'curtisStateV1';
 
+// Track which providers have been confirmed broken this session so we
+// auto-skip them on the next pickBestProvider() call. Cleared on page
+// reload so the user can retry after fixing the key.
+const _providerBroken = (() => {
+  try { return new Set(JSON.parse(sessionStorage.getItem('curtis:brokenProviders') || '[]')); }
+  catch { return new Set(); }
+})();
+function markProviderBroken(id){
+  _providerBroken.add(id);
+  try { sessionStorage.setItem('curtis:brokenProviders', JSON.stringify([..._providerBroken])); } catch{}
+}
+function unmarkProviderBroken(id){
+  _providerBroken.delete(id);
+  try { sessionStorage.setItem('curtis:brokenProviders', JSON.stringify([..._providerBroken])); } catch{}
+}
+
 function pickBestProvider(){
-  // Auto-pick: A2E if a key is set, else OpenAI, else Gemini, else fallback to a2e
+  // Auto-pick: prefer the first provider that has a key AND isn't on
+  // the broken list (e.g. A2E returned 403 "Free plan" so we skip it
+  // for the rest of the session and fall through to OpenAI).
   const get = id => document.getElementById(id)?.value?.trim();
-  if(get('openaiKeyA2E')) return 'a2e';
-  if(get('openaiKey'))    return 'openai';
-  if(get('geminiKey'))    return 'gemini';
+  const candidates = [
+    { id: 'a2e',    hasKey: !!get('openaiKeyA2E') },
+    { id: 'openai', hasKey: !!get('openaiKey')    },
+    { id: 'gemini', hasKey: !!get('geminiKey')    },
+  ];
+  for(const c of candidates){
+    if(c.hasKey && !_providerBroken.has(c.id)) return c.id;
+  }
+  // All configured providers are broken → fall through to the first
+  // configured one (which is the "best effort" path)
+  for(const c of candidates){ if(c.hasKey) return c.id; }
   return 'a2e';
 }
 function currentProvider(){
