@@ -94,8 +94,8 @@ const OPENAI_KEY = process.env.OPENAI_KEY || '';
     // Click the Save button (no auto-save on change in the new UI)
     await page.evaluate(() => document.getElementById('saveSettingsButton').click());
     await page.waitForTimeout(500);
-    // Verify
-    const saved = await page.evaluate(() => sessionStorage.getItem('curtis-studio:credentials:v2'));
+    // Verify (localStorage — survives reloads)
+    const saved = await page.evaluate(() => localStorage.getItem('curtis-studio:credentials:v2'));
     console.log('  saved credentials:', saved ? saved.slice(0, 50) + '...' : 'NULL');
     // Close settings
     await page.evaluate(() => {
