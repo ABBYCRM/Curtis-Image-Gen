@@ -1,0 +1,672 @@
+'use strict';
+
+const API_BASE = 'https://curtis-a2e-proxy.onrender.com';
+const PROJECT_KEY = 'curtis-studio:project:v2';
+const SESSION_KEY = 'curtis-studio:credentials:v2';
+
+const elements = Object.fromEntries([
+  'connectionPill', 'banner', 'referenceDrop', 'referenceFile', 'referenceUrl',
+  'referencePreview', 'referenceEmpty', 'clearReferenceButton', 'scriptInput',
+  'parseButton', 'addSceneButton', 'providerSelect', 'aspectSelect', 'qualitySelect',
+  'styleInput', 'generateButton', 'stopButton', 'runProgress', 'progressText',
+  'sceneList', 'log', 'settingsButton', 'settingsDialog', 'openaiKeyInput',
+  'a2eKeyInput', 'appTokenInput', 'saveSettingsButton', 'wipeButton',
+  'exportButton', 'importFile'
+].map((id) => [id, document.getElementById(id)]));
+
+const state = {
+  scenes: [],
+  reference: null,
+  running: false,
+  abortController: null,
+};
+
+function createId() {
+  return globalThis.crypto?.randomUUID?.() || `scene-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function readCredentials() {
+  try {
+    return JSON.parse(sessionStorage.getItem(SESSION_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function saveCredentials() {
+  const credentials = {
+    openaiKey: elements.openaiKeyInput.value.trim(),
+    a2eKey: elements.a2eKeyInput.value.trim(),
+    appToken: elements.appTokenInput.value.trim(),
+  };
+  sessionStorage.setItem(SESSION_KEY, JSON.stringify(credentials));
+  updateGenerateLabel();
+  setBanner('ok', 'Credentials saved for this browser session.');
+}
+
+function providerHeaders(provider) {
+  const credentials = readCredentials();
+  const headers = { 'Content-Type': 'application/json' };
+  if (provider === 'openai' && credentials.openaiKey) headers['x-openai-key'] = credentials.openaiKey;
+  if (provider === 'a2e' && credentials.a2eKey) headers['x-a2e-key'] = credentials.a2eKey;
+  if (credentials.appToken) headers['x-app-token'] = credentials.appToken;
+  return headers;
+}
+
+function hasProviderKey(provider) {
+  const credentials = readCredentials();
+  return provider === 'openai' ? Boolean(credentials.openaiKey || credentials.appToken) : Boolean(credentials.a2eKey || credentials.appToken);
+}
+
+function setBanner(kind, message) {
+  elements.banner.className = `banner ${kind}`;
+  elements.banner.textContent = message;
+}
+
+function log(message, kind = '') {
+  const row = document.createElement('div');
+  row.className = `log-entry ${kind}`.trim();
+  row.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+  elements.log.append(row);
+  elements.log.scrollTop = elements.log.scrollHeight;
+}
+
+function setProgress(current, total, message) {
+  const percent = total ? Math.round((current / total) * 100) : 0;
+  elements.runProgress.value = percent;
+  elements.progressText.textContent = message;
+}
+
+function updateGenerateLabel() {
+  const provider = elements.providerSelect.value;
+  elements.generateButton.textContent = provider === 'a2e'
+    ? 'Generate images + A2E clips'
+    : 'Generate scene images';
+}
+
+function projectSnapshot() {
+  return {
+    version: 2,
+    reference: state.reference,
+    script: elements.scriptInput.value,
+    provider: elements.providerSelect.value,
+    aspect: elements.aspectSelect.value,
+    quality: elements.qualitySelect.value,
+    style: elements.styleInput.value,
+    scenes: state.scenes.map(({ id, title, description, visual, voiceover }) => ({ id, title, description, visual, voiceover })),
+  };
+}
+
+function saveProject() {
+  try {
+    localStorage.setItem(PROJECT_KEY, JSON.stringify(projectSnapshot()));
+  } catch (error) {
+    log(`Project could not be saved locally: ${error.message}`, 'error');
+  }
+}
+
+function loadProject() {
+  try {
+    const project = JSON.parse(localStorage.getItem(PROJECT_KEY) || 'null');
+    if (!project || project.version !== 2) return;
+    state.reference = typeof project.reference === 'string' ? project.reference : null;
+    elements.scriptInput.value = typeof project.script === 'string' ? project.script : '';
+    elements.providerSelect.value = ['openai', 'a2e'].includes(project.provider) ? project.provider : 'openai';
+    elements.aspectSelect.value = ['16:9', '9:16', '1:1'].includes(project.aspect) ? project.aspect : '16:9';
+    elements.qualitySelect.value = ['low', 'medium', 'high'].includes(project.quality) ? project.quality : 'medium';
+    elements.styleInput.value = typeof project.style === 'string' ? project.style : elements.styleInput.value;
+    state.scenes = Array.isArray(project.scenes)
+      ? project.scenes.slice(0, 50).map((scene, index) => ({
+          id: typeof scene.id === 'string' ? scene.id : createId(),
+          n: index + 1,
+          title: String(scene.title || `Scene ${index + 1}`).slice(0, 120),
+          description: String(scene.description || '').slice(0, 12000),
+          visual: String(scene.visual || '').slice(0, 4000),
+          voiceover: String(scene.voiceover || '').slice(0, 4000),
+          imageStatus: 'idle', videoStatus: 'idle', imageUrl: null, videoUrl: null,
+        }))
+      : [];
+    renderReference();
+    renderScenes();
+    updateGenerateLabel();
+  } catch (error) {
+    log(`Saved project was ignored: ${error.message}`, 'error');
+  }
+}
+
+function renderReference() {
+  if (state.reference) {
+    elements.referencePreview.src = state.reference;
+    elements.referencePreview.hidden = false;
+    elements.referenceEmpty.hidden = true;
+  } else {
+    elements.referencePreview.removeAttribute('src');
+    elements.referencePreview.hidden = true;
+    elements.referenceEmpty.hidden = false;
+  }
+}
+
+function makeSceneCard(scene) {
+  const card = document.createElement('article');
+  card.className = 'scene-card';
+
+  const media = document.createElement('div');
+  media.className = 'scene-media';
+  if (scene.videoUrl) {
+    const video = document.createElement('video');
+    video.src = scene.videoUrl;
+    video.controls = true;
+    video.playsInline = true;
+    media.append(video);
+  } else if (scene.imageUrl) {
+    const image = document.createElement('img');
+    image.src = scene.imageUrl;
+    image.alt = `Generated image for ${scene.title}`;
+    media.append(image);
+  } else {
+    media.textContent = `Scene ${scene.n}`;
+  }
+
+  const body = document.createElement('div');
+  body.className = 'scene-body';
+  const titleRow = document.createElement('div');
+  titleRow.className = 'scene-title-row';
+  const title = document.createElement('h3');
+  title.textContent = `${scene.n}. ${scene.title}`;
+  const status = document.createElement('span');
+  const combined = scene.videoStatus === 'running' || scene.imageStatus === 'running'
+    ? 'running'
+    : scene.videoStatus === 'failed' || scene.imageStatus === 'failed'
+      ? 'failed'
+      : scene.videoStatus === 'done' || scene.imageStatus === 'done'
+        ? 'done'
+        : 'idle';
+  status.className = `status ${combined}`;
+  status.textContent = combined;
+  titleRow.append(title, status);
+
+  const description = document.createElement('textarea');
+  description.value = scene.description;
+  description.setAttribute('aria-label', `Scene ${scene.n} description`);
+  description.addEventListener('input', () => {
+    scene.description = description.value;
+    const fields = extractFields(scene.description);
+    scene.visual = fields.visual;
+    scene.voiceover = fields.voiceover;
+    saveProject();
+  });
+
+  const actions = document.createElement('div');
+  actions.className = 'button-row compact';
+  const imageButton = actionButton('Regenerate image', async () => runSingleImage(scene));
+  actions.append(imageButton);
+  if (scene.imageUrl) actions.append(actionButton('Download image', () => downloadUrl(scene.imageUrl, `scene-${scene.n}.png`), 'ghost'));
+  if (scene.videoUrl) actions.append(actionButton('Download clip', () => downloadUrl(scene.videoUrl, `scene-${scene.n}.mp4`), 'ghost'));
+  actions.append(actionButton('Delete', () => {
+    state.scenes = state.scenes.filter((item) => item.id !== scene.id);
+    renumberScenes();
+    renderScenes();
+    saveProject();
+  }, 'danger'));
+
+  body.append(titleRow, description, actions);
+  card.append(media, body);
+  return card;
+}
+
+function actionButton(label, handler, variant = '') {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `button small ${variant}`.trim();
+  button.textContent = label;
+  button.disabled = state.running;
+  button.addEventListener('click', handler);
+  return button;
+}
+
+function renderScenes() {
+  elements.sceneList.replaceChildren();
+  if (!state.scenes.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
+    empty.textContent = 'No scenes yet. Parse a script or add a blank scene.';
+    elements.sceneList.append(empty);
+    return;
+  }
+  for (const scene of state.scenes) elements.sceneList.append(makeSceneCard(scene));
+}
+
+function renumberScenes() {
+  state.scenes.forEach((scene, index) => { scene.n = index + 1; });
+}
+
+function extractFields(description) {
+  const find = (name) => {
+    const match = description.match(new RegExp(`(?:^|\\n)\\s*(?:[•*\\-]\\s*)?${name}\\s*:\\s*([^\\n]+)`, 'i'));
+    return match ? match[1].replace(/^['“”"]|['“”"]$/g, '').trim() : '';
+  };
+  return {
+    visual: find('Visual') || description.trim(),
+    voiceover: find('Voiceover'),
+  };
+}
+
+function parseScript(text) {
+  const source = text.trim();
+  if (!source) return [];
+  const timedHeader = /^\s*\[(\d{1,2}:\d{2}(?:\.\d+)?\s*[–-]\s*\d{1,2}:\d{2}(?:\.\d+)?)\]\s*Scene\s+\d+\s*:\s*(.+)$/gim;
+  const matches = [...source.matchAll(timedHeader)];
+  const blocks = [];
+  if (matches.length) {
+    matches.forEach((match, index) => {
+      const start = match.index;
+      const end = matches[index + 1]?.index ?? source.length;
+      blocks.push(source.slice(start, end).trim());
+    });
+  } else {
+    blocks.push(...source.split(/^\s*---\s*$/m).map((block) => block.trim()).filter(Boolean));
+  }
+  return blocks.slice(0, 50).map((block, index) => {
+    const lines = block.split(/\r?\n/);
+    let titleLine = lines.shift()?.trim() || `Scene ${index + 1}`;
+    titleLine = titleLine.replace(/^\[[^\]]+\]\s*/i, '').replace(/^Scene\s+\d+\s*:\s*/i, '');
+    const description = lines.join('\n').trim() || titleLine;
+    const fields = extractFields(description);
+    return {
+      id: createId(), n: index + 1, title: titleLine.slice(0, 120), description,
+      visual: fields.visual, voiceover: fields.voiceover,
+      imageStatus: 'idle', videoStatus: 'idle', imageUrl: null, videoUrl: null,
+    };
+  });
+}
+
+function aspectToOpenAISize(aspect) {
+  if (aspect === '9:16') return '1024x1536';
+  if (aspect === '1:1') return '1024x1024';
+  return '1536x1024';
+}
+
+function sceneImagePrompt(scene) {
+  const style = elements.styleInput.value.trim();
+  return [
+    style,
+    `Scene title: ${scene.title}`,
+    `Visual: ${scene.visual || scene.description}`,
+    'Use the supplied reference image as the identity reference. Preserve the same adult person, facial structure, age, skin tone, hair, and distinctive features. Do not copy the reference background unless requested.',
+  ].filter(Boolean).join('\n\n');
+}
+
+function sceneVideoPrompt(scene) {
+  return [
+    `Scene: ${scene.title}`,
+    `Visual action: ${scene.visual || scene.description}`,
+    scene.voiceover ? `Spoken line or atmosphere: ${scene.voiceover}` : '',
+    'Preserve the identity and wardrobe shown in the source image. Natural motion, stable camera unless the scene requests movement.',
+  ].filter(Boolean).join('\n\n');
+}
+
+async function apiRequest(path, provider, options = {}) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers: { ...providerHeaders(provider), ...(options.headers || {}) },
+    signal: state.abortController?.signal,
+  });
+  const text = await response.text();
+  let body;
+  try { body = JSON.parse(text); } catch { body = { friendly: text.slice(0, 500) }; }
+  if (!response.ok) {
+    const error = new Error(body.friendly || body?.error?.message || `HTTP ${response.status}`);
+    error.retryable = Boolean(body.retryable);
+    error.status = response.status;
+    throw error;
+  }
+  return body;
+}
+
+function a2eJobId(body) {
+  return body?.data?._id || body?.data?.id || body?._id || body?.id || null;
+}
+
+function a2eState(body) {
+  const data = body?.data || body;
+  const value = String(data?.current_status || data?.status || '').toLowerCase();
+  if (['completed', 'succeeded', 'success', 'done', 'finished'].includes(value)) return 'done';
+  if (['failed', 'error', 'canceled', 'cancelled'].includes(value)) return 'failed';
+  return 'running';
+}
+
+async function pollA2E(kind, id) {
+  for (let attempt = 0; attempt < 72; attempt += 1) {
+    const body = await apiRequest(`/a2e/status?kind=${encodeURIComponent(kind)}&id=${encodeURIComponent(id)}`, 'a2e', { method: 'GET' });
+    const status = a2eState(body);
+    const data = body.data || body;
+    if (status === 'done') {
+      return kind === 'image'
+        ? data.image_urls?.[0] || data.image_url || data.result_url || data.output_url
+        : data.result_url || data.video_url || data.output_url;
+    }
+    if (status === 'failed') throw new Error(data.failed_message || data.error || `A2E ${kind} job failed.`);
+    await sleep(Math.min(2500 + attempt * 150, 6000));
+  }
+  throw new Error(`A2E ${kind} job timed out.`);
+}
+
+function sleep(ms) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    state.abortController?.signal.addEventListener('abort', () => {
+      clearTimeout(timer);
+      reject(new DOMException('Stopped', 'AbortError'));
+    }, { once: true });
+  });
+}
+
+async function generateOpenAIImage(scene) {
+  const body = await apiRequest('/openai/images', 'openai', {
+    method: 'POST',
+    body: JSON.stringify({
+      prompt: sceneImagePrompt(scene),
+      input_reference: state.reference,
+      size: aspectToOpenAISize(elements.aspectSelect.value),
+      quality: elements.qualitySelect.value,
+    }),
+  });
+  if (!body.image_url) throw new Error('OpenAI returned no image.');
+  return body.image_url;
+}
+
+async function generateA2EImage(scene) {
+  const body = await apiRequest('/a2e', 'a2e', {
+    method: 'POST',
+    body: JSON.stringify({
+      action: 'image_start',
+      prompt: sceneImagePrompt(scene),
+      input_images: state.reference ? [state.reference] : [],
+      aspectRatio: elements.aspectSelect.value,
+      resolution: elements.qualitySelect.value === 'high' ? '4K' : elements.qualitySelect.value === 'low' ? '1K' : '2K',
+    }),
+  });
+  const id = a2eJobId(body);
+  if (!id) {
+    const immediate = body?.data?.image_urls?.[0] || body?.data?.image_url;
+    if (immediate) return immediate;
+    throw new Error('A2E returned no image job ID.');
+  }
+  return pollA2E('image', id);
+}
+
+async function generateA2EVideo(scene) {
+  const source = scene.imageUrl || state.reference;
+  const body = await apiRequest('/a2e', 'a2e', {
+    method: 'POST',
+    body: JSON.stringify({
+      action: 'video_start',
+      image_url: source,
+      prompt: sceneVideoPrompt(scene),
+      aspectRatio: elements.aspectSelect.value,
+      negative_prompt: 'deformed face, identity drift, blurry face, low quality, extra fingers',
+    }),
+  });
+  const id = a2eJobId(body);
+  if (!id) {
+    const immediate = body?.data?.result_url || body?.data?.video_url;
+    if (immediate) return immediate;
+    throw new Error('A2E returned no video job ID.');
+  }
+  return pollA2E('video', id);
+}
+
+async function runSingleImage(scene) {
+  if (state.running) return;
+  await runPipeline([scene], false);
+}
+
+async function runPipeline(scenes = state.scenes, includeVideos = elements.providerSelect.value === 'a2e') {
+  if (state.running) return;
+  const provider = elements.providerSelect.value;
+  if (!state.reference) return setBanner('bad', 'Add a valid reference image first.');
+  if (!scenes.length) return setBanner('bad', 'Parse at least one scene first.');
+  if (!hasProviderKey(provider)) {
+    setBanner('bad', `Open Settings and add a ${provider === 'openai' ? 'OpenAI' : 'A2E'} key.`);
+    elements.settingsDialog.showModal();
+    return;
+  }
+
+  state.running = true;
+  state.abortController = new AbortController();
+  elements.generateButton.disabled = true;
+  elements.stopButton.disabled = false;
+  renderScenes();
+  const operations = scenes.length * (includeVideos ? 2 : 1);
+  let completed = 0;
+
+  try {
+    setBanner('info', `Generating with ${provider === 'openai' ? 'GPT Image 2' : 'A2E'}…`);
+    for (const scene of scenes) {
+      scene.imageStatus = 'running';
+      scene.imageUrl = null;
+      renderScenes();
+      log(`Scene ${scene.n}: submitting image to ${provider}.`);
+      scene.imageUrl = provider === 'openai'
+        ? await generateOpenAIImage(scene)
+        : await generateA2EImage(scene);
+      scene.imageStatus = 'done';
+      completed += 1;
+      setProgress(completed, operations, `Scene ${scene.n} image complete.`);
+      log(`Scene ${scene.n}: image complete.`, 'success');
+      renderScenes();
+
+      if (includeVideos) {
+        scene.videoStatus = 'running';
+        renderScenes();
+        log(`Scene ${scene.n}: submitting A2E clip from the approved scene image.`);
+        scene.videoUrl = await generateA2EVideo(scene);
+        scene.videoStatus = 'done';
+        completed += 1;
+        setProgress(completed, operations, `Scene ${scene.n} clip complete.`);
+        log(`Scene ${scene.n}: clip complete.`, 'success');
+        renderScenes();
+      }
+    }
+    setBanner('ok', includeVideos
+      ? 'All scene images and A2E clips are ready. Download clips from each scene.'
+      : 'All scene images are ready.');
+    setProgress(operations, operations, 'Complete');
+  } catch (error) {
+    const stopped = error.name === 'AbortError';
+    for (const scene of scenes) {
+      if (scene.imageStatus === 'running') scene.imageStatus = stopped ? 'idle' : 'failed';
+      if (scene.videoStatus === 'running') scene.videoStatus = stopped ? 'idle' : 'failed';
+    }
+    setBanner(stopped ? 'warn' : 'bad', stopped ? 'Generation stopped.' : error.message);
+    log(stopped ? 'Generation stopped by user.' : error.message, stopped ? '' : 'error');
+    setProgress(completed, operations, stopped ? 'Stopped' : 'Failed');
+  } finally {
+    state.running = false;
+    state.abortController = null;
+    elements.generateButton.disabled = false;
+    elements.stopButton.disabled = true;
+    renderScenes();
+  }
+}
+
+function downloadUrl(url, filename) {
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.rel = 'noopener';
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+}
+
+async function resizeImage(file) {
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) throw new Error('Choose a JPEG, PNG, or WebP image.');
+  if (file.size > 12 * 1024 * 1024) throw new Error('Image must be 12 MB or smaller.');
+  const source = await createImageBitmap(file);
+  const max = 1600;
+  const scale = Math.min(1, max / Math.max(source.width, source.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(source.width * scale));
+  canvas.height = Math.max(1, Math.round(source.height * scale));
+  canvas.getContext('2d', { alpha: false }).drawImage(source, 0, 0, canvas.width, canvas.height);
+  source.close();
+  return canvas.toDataURL('image/jpeg', .9);
+}
+
+async function setReferenceFile(file) {
+  try {
+    state.reference = await resizeImage(file);
+    elements.referenceUrl.value = '';
+    renderReference();
+    saveProject();
+    setBanner('ok', 'Reference image ready.');
+  } catch (error) {
+    setBanner('bad', error.message);
+  }
+}
+
+async function setReferenceUrl() {
+  const value = elements.referenceUrl.value.trim();
+  if (!value) return;
+  let url;
+  try { url = new URL(value); } catch { return setBanner('bad', 'Enter a valid HTTPS image URL.'); }
+  if (url.protocol !== 'https:') return setBanner('bad', 'Reference URLs must use HTTPS.');
+  const testImage = new Image();
+  testImage.referrerPolicy = 'no-referrer';
+  testImage.onload = () => {
+    state.reference = value;
+    renderReference();
+    saveProject();
+    setBanner('ok', 'Reference URL loaded.');
+  };
+  testImage.onerror = () => setBanner('bad', 'The reference URL could not be loaded as an image.');
+  testImage.src = value;
+}
+
+async function probeProxy() {
+  elements.connectionPill.className = 'pill checking';
+  elements.connectionPill.textContent = 'Checking proxy…';
+  try {
+    const response = await fetch(`${API_BASE}/healthz`, { cache: 'no-store' });
+    const body = await response.json();
+    if (!response.ok || !body.ok) throw new Error(`HTTP ${response.status}`);
+    elements.connectionPill.className = 'pill ok';
+    elements.connectionPill.textContent = `Proxy online · v${body.version || '?'}`;
+  } catch (error) {
+    elements.connectionPill.className = 'pill bad';
+    elements.connectionPill.textContent = 'Proxy unavailable';
+    elements.connectionPill.title = error.message;
+  }
+}
+
+function exportProject() {
+  const blob = new Blob([JSON.stringify(projectSnapshot(), null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  downloadUrl(url, `curtis-project-${new Date().toISOString().slice(0, 10)}.json`);
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+async function importProject(file) {
+  try {
+    if (file.size > 5 * 1024 * 1024) throw new Error('Project file is too large.');
+    const project = JSON.parse(await file.text());
+    if (project.version !== 2 || !Array.isArray(project.scenes)) throw new Error('Unsupported project format.');
+    localStorage.setItem(PROJECT_KEY, JSON.stringify(project));
+    state.scenes = [];
+    state.reference = null;
+    loadProject();
+    setBanner('ok', 'Project imported.');
+  } catch (error) {
+    setBanner('bad', `Import failed: ${error.message}`);
+  } finally {
+    elements.importFile.value = '';
+  }
+}
+
+function wireEvents() {
+  elements.referenceFile.addEventListener('change', () => {
+    const file = elements.referenceFile.files?.[0];
+    if (file) setReferenceFile(file);
+  });
+  elements.referenceUrl.addEventListener('change', setReferenceUrl);
+  elements.clearReferenceButton.addEventListener('click', () => {
+    state.reference = null;
+    elements.referenceUrl.value = '';
+    elements.referenceFile.value = '';
+    renderReference();
+    saveProject();
+    setBanner('info', 'Reference cleared.');
+  });
+  for (const eventName of ['dragenter', 'dragover']) {
+    elements.referenceDrop.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      elements.referenceDrop.classList.add('drag');
+    });
+  }
+  for (const eventName of ['dragleave', 'drop']) {
+    elements.referenceDrop.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      elements.referenceDrop.classList.remove('drag');
+    });
+  }
+  elements.referenceDrop.addEventListener('drop', (event) => {
+    const file = event.dataTransfer?.files?.[0];
+    if (file) setReferenceFile(file);
+  });
+  elements.referenceDrop.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') elements.referenceFile.click();
+  });
+  elements.parseButton.addEventListener('click', () => {
+    const scenes = parseScript(elements.scriptInput.value);
+    if (!scenes.length) return setBanner('bad', 'The script does not contain any scenes.');
+    state.scenes = scenes;
+    renderScenes();
+    saveProject();
+    setBanner('ok', `Parsed ${scenes.length} scene${scenes.length === 1 ? '' : 's'}.`);
+  });
+  elements.addSceneButton.addEventListener('click', () => {
+    state.scenes.push({
+      id: createId(), n: state.scenes.length + 1, title: `Scene ${state.scenes.length + 1}`,
+      description: '', visual: '', voiceover: '', imageStatus: 'idle', videoStatus: 'idle', imageUrl: null, videoUrl: null,
+    });
+    renderScenes();
+    saveProject();
+  });
+  elements.providerSelect.addEventListener('change', () => { updateGenerateLabel(); saveProject(); });
+  elements.aspectSelect.addEventListener('change', saveProject);
+  elements.qualitySelect.addEventListener('change', saveProject);
+  elements.styleInput.addEventListener('change', saveProject);
+  elements.scriptInput.addEventListener('change', saveProject);
+  elements.generateButton.addEventListener('click', () => runPipeline());
+  elements.stopButton.addEventListener('click', () => state.abortController?.abort());
+  elements.settingsButton.addEventListener('click', () => elements.settingsDialog.showModal());
+  elements.saveSettingsButton.addEventListener('click', saveCredentials);
+  elements.wipeButton.addEventListener('click', () => {
+    if (!confirm('Delete the saved project and session credentials from this browser?')) return;
+    localStorage.removeItem(PROJECT_KEY);
+    sessionStorage.removeItem(SESSION_KEY);
+    location.reload();
+  });
+  elements.exportButton.addEventListener('click', exportProject);
+  elements.importFile.addEventListener('change', () => {
+    const file = elements.importFile.files?.[0];
+    if (file) importProject(file);
+  });
+}
+
+function init() {
+  const credentials = readCredentials();
+  elements.openaiKeyInput.value = credentials.openaiKey || '';
+  elements.a2eKeyInput.value = credentials.a2eKey || '';
+  elements.appTokenInput.value = credentials.appToken || '';
+  wireEvents();
+  loadProject();
+  renderReference();
+  renderScenes();
+  updateGenerateLabel();
+  probeProxy();
+  if (state.reference && state.scenes.length) setBanner('ok', `${state.scenes.length} saved scene${state.scenes.length === 1 ? '' : 's'} ready.`);
+}
+
+init();
