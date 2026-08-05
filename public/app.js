@@ -356,7 +356,13 @@ function actionButton(label, handler, variant = '') {
   button.type = 'button';
   button.className = `button small ${variant}`.trim();
   button.textContent = label;
-  button.disabled = state.running;
+  // NOTE: scene-card and album-card buttons are NOT disabled while
+  // a generation is running. The user should be able to download or
+  // delete an existing asset even while a new one is being generated.
+  // The state.running flag is for the top-level Run/Stop controls
+  // (Generate, Create all videos, Stop) and the per-scene Regenerate
+  // image / Recreate clip buttons, not for the passive Download /
+  // Delete / Clear actions.
   button.addEventListener('click', handler);
   return button;
 }

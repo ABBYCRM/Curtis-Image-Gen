@@ -155,18 +155,16 @@ const OPENAI_KEY = process.env.OPENAI_KEY || '';
 
   // 6. Click the Download button on the first album card.
   //    Playwright's acceptDownloads + download event let us observe the
-  //    save attempt. We check the .href / .download attribute too.
+  //    save attempt. We use page.locator(...).click() (not a synthetic
+  //    DOM click) because Playwright's download capture does not always
+  //    fire on synthetic events — the browser must see a "real" user
+  //    gesture for the navigation-vs-download decision.
   console.log('=== clicking Download on first album card ===');
   const beforeDownloads = downloads.length;
   const beforeCalls = apiCalls.length;
   const beforeErrors = errors.length;
-  await page.evaluate(() => {
-    const grid = document.getElementById('albumGrid');
-    const firstCard = grid.children[0];
-    for(const b of firstCard.querySelectorAll('button')){
-      if(/^Download$/i.test(b.textContent.trim())){ b.click(); return; }
-    }
-  });
+  const dlButton = page.locator('#albumGrid .album-card').first().locator('button', { hasText: /^Download$/i });
+  await dlButton.click();
   // Give the download time to fetch the bytes (3MB image ~ 200ms) and
   // for Playwright to capture the download event.
   await page.waitForTimeout(8000);
