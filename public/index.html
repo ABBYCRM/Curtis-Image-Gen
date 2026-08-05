@@ -14,7 +14,7 @@
   <header class="topbar">
     <div>
       <h1>Curtis Image Studio</h1>
-      <p>Reference-locked scene images, with optional A2E clips.</p>
+      <p>Reference-locked scene images and video clips (OpenAI Sora 2 with A2E fallback).</p>
     </div>
     <div id="connectionPill" class="pill checking" role="status">Checking proxy…</div>
   </header>
@@ -106,8 +106,8 @@
           <label for="styleInput">Shared style</label>
           <textarea id="styleInput" rows="4">cinematic film still, photorealistic, coherent wardrobe and lighting, preserve the exact identity and facial features from the reference image</textarea>
           <div class="button-row primary-actions">
-            <button id="generateButton" class="button primary" type="button">Generate scene images</button>
-            <button id="createAllVideosButton" class="button" type="button" title="OpenAI Sora 2 first, A2E fallback">Create all videos</button>
+            <button id="generateButton" class="button primary" type="button">Generate images + videos</button>
+            <button id="createAllVideosButton" class="button" type="button" title="OpenAI Sora 2 first, A2E fallback. Use this to retry clips for scenes that already have images.">Retry all clips</button>
             <button id="stopButton" class="button danger" type="button" disabled>Stop</button>
           </div>
           <progress id="runProgress" max="100" value="0"></progress>
@@ -164,7 +164,7 @@
         </div>
         <button class="button ghost small" value="cancel">Close</button>
       </div>
-      <p class="notice">Keys are kept in <strong>localStorage</strong> for this browser, so they survive page reloads and new tabs. Use <strong>Wipe project data</strong> below to clear them.</p>
+      <p class="notice">Keys are kept in <strong>localStorage</strong> for this browser, so they survive page reloads and new tabs. Use <strong>Wipe all browser data</strong> below to clear them.</p>
       <label>
         OpenAI API key
         <input id="openaiKeyInput" type="password" autocomplete="off" placeholder="sk-…">

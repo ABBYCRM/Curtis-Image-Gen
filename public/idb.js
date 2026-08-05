@@ -36,6 +36,10 @@ function openDb() {
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error || new Error('IndexedDB open failed'));
+    // If another tab has the DB open, the request blocks until the
+    // user closes the other tab. We surface this as a recoverable
+    // error instead of hanging forever.
+    request.onblocked = () => reject(new Error('IndexedDB is open in another tab. Close it and reload.'));
   });
 }
 
@@ -65,6 +69,10 @@ async function getReference() {
       request.onerror = () => reject(request.error || new Error('IndexedDB get failed'));
     });
   } catch (error) {
+    // log so app.js / the smoke tests can still see the difference
+    // between "no reference yet" (null return from onsuccess) and
+    // "IndexedDB actually broke" (error path here).
+    console.warn('[CurtisIndexedDb] getReference failed:', error && error.message);
     return null;
   } finally {
     db.close();

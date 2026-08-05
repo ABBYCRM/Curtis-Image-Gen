@@ -159,10 +159,7 @@ const OPENAI_KEY = process.env.OPENAI_KEY || '';
   console.log('=== clicking Download on first album card ===');
   const beforeDownloads = downloads.length;
   const beforeCalls = apiCalls.length;
-  // Also watch the network — if the fetch fires we know the click worked
-  let downloadAttemptFailed = false;
-  const pageErrorListener = e => { downloadAttemptFailed = e.message; };
-  page.on('pageerror', pageErrorListener);
+  const beforeErrors = errors.length;
   await page.evaluate(() => {
     const grid = document.getElementById('albumGrid');
     const firstCard = grid.children[0];
@@ -175,7 +172,6 @@ const OPENAI_KEY = process.env.OPENAI_KEY || '';
   await page.waitForTimeout(8000);
 
   console.log('  downloads captured:', downloads.length - beforeDownloads);
-  console.log('  pageError during download:', downloadAttemptFailed);
   if(downloads.length - beforeDownloads < 1) {
     console.error('FAIL: no download event captured when Download was clicked');
     console.error('  recent proxy calls:');

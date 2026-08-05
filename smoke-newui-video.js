@@ -19,7 +19,9 @@ const { chromium, devices } = require('playwright');
 const CHROME = '/root/.cache/ms-playwright/chromium-1223/chrome-linux/chrome';
 const URL = 'https://curtis-image-gen.onrender.com/?t=' + Date.now();
 const OPENAI_KEY = process.env.OPENAI_KEY || '';
-const TOTAL_WAIT_MS = Number(process.env.TOTAL_WAIT_MS || 120000);
+// Sora 2 typically takes 60-90s for a 4s clip on the default tier. We
+// give 180s before giving up so the test passes on the slow path.
+const TOTAL_WAIT_MS = Number(process.env.TOTAL_WAIT_MS || 180000);
 
 (async () => {
   if (!OPENAI_KEY) {

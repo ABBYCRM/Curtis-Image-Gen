@@ -1187,21 +1187,18 @@ async function dataUrlToBlob(dataUrl) {
   return new Blob([bytes], { type: match[1] });
 }
 
-
-//   - data: URLs pass straight through
-//   - blob: URLs pass straight through
-//   - https: URLs that point back to our proxy need the same auth the
-//     front-end already has (x-openai-key / x-a2e-key), so we fetch
-//     them with the right header and wrap the result in a blob URL
+// Save bytes the browser to disk. Three URL forms are supported:
+//   - data:  URLs (OpenAI image responses): the browser handles the save
+//   - blob:  URLs (Sora 2 byte streams):     the browser handles the save
+//   - https: URLs (proxy /album/ bytes):     the browser handles the save
+// All three are public, anonymous reads — none of them need an auth
+// header. We just click an anchor with a `download` attribute. The
+// previous fetch+blob approach was here, but it triggered a CORS
+// preflight race in some browsers and offered no benefit since the
+// proxy already sends the bytes with the right Content-Disposition.
 async function downloadAsset(url, filename, mime = 'application/octet-stream') {
   try {
     if (!url) throw new Error('No URL to download.');
-    // For data: and blob: URLs the browser handles the save directly.
-    // For https: URLs that point to the proxy's /album/ routes, the
-    // proxy already sends the bytes as a public asset (no auth required
-    // for reads) — use the URL directly so we don't add a CORS round-
-    // trip. (The fetch+blob approach used to be here but triggered a
-    // CORS preflight race in some browsers.)
     const anchor = document.createElement('a');
     anchor.href = url;
     anchor.download = filename;
@@ -1307,7 +1304,13 @@ async function setReferenceUrl() {
         return;
       }
     }
-  } catch { /* fall through to direct-URL path */ }
+  } catch (error) {
+    // Log the proxy failure so the user can see why the URL was
+    // not proxied — the fallback below uses the URL as-is, which
+    // can be slower and may fail downstream if the host blocks the
+    // proxy. The original error is the most useful diagnostic.
+    log(`Proxy reference fetch failed (${error.message}); using URL directly.`, 'warn');
+  }
   // Fallback: keep the URL as-is. The provider endpoints accept an
   // HTTPS URL for input_reference; the proxy resizes with sharp if
   // needed. This is the behavior we had before the IndexedDB
@@ -1414,6 +1417,9 @@ function wireEvents() {
   elements.referenceFile.addEventListener('change', () => {
     const file = elements.referenceFile.files?.[0];
     if (file) setReferenceFile(file);
+    // Reset the input so the user can re-pick the SAME file (the
+    // 'change' event only fires when the selected file changes).
+    elements.referenceFile.value = '';
   });
   elements.referenceUrl.addEventListener('change', setReferenceUrl);
   elements.clearReferenceButton.addEventListener('click', async () => {

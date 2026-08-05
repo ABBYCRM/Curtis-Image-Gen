@@ -7,8 +7,7 @@ The app is a single self-contained HTML page (no build step, no framework, no th
 ## What it does
 
 - Parse a script (timed headers `[0:00 - 0:04] Scene N: Title` or `---` separators).
-- Generate a face-locked image per scene.
-- Generate a short video clip per scene, **OpenAI Sora 2 first with A2E as automatic fallback**.
+- One click does **images + videos** for every scene. OpenAI GPT Image 2 for stills (with A2E fallback), OpenAI Sora 2 for clips (with A2E fallback).
 - Persist every successful image and clip to the **Album** tab so you can re-download them across browser sessions and tabs.
 
 ## Supported production paths
@@ -24,7 +23,7 @@ The Create Video button tries **OpenAI Sora 2 first**, then falls back to A2E on
 ## Security model
 
 - **Provider keys are stored in `localStorage`** (not `sessionStorage`) so they survive page reloads and new tabs. The Wipe button under Settings clears both project data and credentials.
-- Project structure (script, scenes, prompt text) and the resized reference image are also in `localStorage`. A typical 1600 px JPEG reference is 0.8–2.5 MB; the whole `curtis-studio:project:v2` blob can approach the per-origin ~5 MB quota. The save is wrapped in a `try/catch` and logs `"Project could not be saved locally: …"` if it fails.
+- Project structure (script, scenes, prompt text) lives in `localStorage`. The **resized reference image is stored in IndexedDB** (`public/idb.js`) so the project blob never approaches the per-origin `localStorage` quota. A migration (`migrateLegacyReference`) copies any v1 inlined data URL into IndexedDB on first load.
 - The app has a strict Content Security Policy in a `<meta http-equiv="Content-Security-Policy">` tag. No third-party scripts, no third-party fonts, no external analytics.
 - The proxy never exposes env-stored provider keys to anonymous callers. If `APP_PROXY_TOKEN` is set on the proxy, callers must send the matching `x-app-token` header to use those keys.
 - All XSS-prone fields use `textContent` (never `innerHTML`). A static contract check (`static-contract.js`) blocks the string `innerHTML =` from re-entering the codebase.
@@ -36,6 +35,7 @@ public/
   index.html   — semantic shell, CSP, 3-tab layout (Setup / Scenes / Album)
   styles.css   — responsive dark theme
   app.js       — state, parsing, provider client, generation, album
+  idb.js       — IndexedDB wrapper for the reference image blob
 static-contract.js  — Node-only DOM / runtime contract check (no deps)
 smoke-newui.js          — end-to-end Playwright test for image generation
 smoke-newui-video.js    — end-to-end Playwright test for Create Video (Sora 2)
@@ -91,7 +91,8 @@ The video test takes ~2 minutes end-to-end because Sora 2 takes 30–60 seconds 
 
 ## Known limitations
 
-- Reference image is a `data:` URL in `localStorage`. For very large reference photos the project may fail to save (`localStorage` quota is ~5 MB per origin).
+- Reference image is in IndexedDB, which has no practical quota. The front-end was migrated from `localStorage` to fix a silent quota failure.
 - Sora 2 returns 422 if the inpaint reference dimensions don't match the requested size. The proxy resizes the reference to exactly the requested size with `sharp` before forwarding — but a square reference sent for 16:9 is the closest match `sharp` can do without distorting; users who want pure face-lock should use a 16:9 reference.
 - A2E free plan rejects video generation with HTTP 403. The Settings dialog links to upgrade at `video.a2e.ai` if the user wants A2E clips.
 - Album is file-backed on the proxy. Render's free web service has ephemeral disk; redeploying the proxy will wipe the album. A future change can move the same `saveAssetToAlbum` interface onto Postgres or S3.
+- Failed scenes surface the actual error message inline on the card (red-bordered paragraph). The status badge also gets a `title=` tooltip with the error for hover discoverability.

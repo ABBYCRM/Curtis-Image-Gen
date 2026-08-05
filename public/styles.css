@@ -82,6 +82,10 @@ input, textarea, select {
   outline: none;
 }
 input:focus, textarea:focus, select:focus { border-color: #697795; box-shadow: 0 0 0 3px rgba(105,119,149,.15); }
+button:focus-visible, .tab:focus-visible, .file-button:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
 textarea { resize: vertical; line-height: 1.45; }
 .form-row, .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: .75rem; margin-top: .75rem; }
 .form-grid { grid-template-columns: repeat(3, minmax(0,1fr)); margin-bottom: .8rem; }

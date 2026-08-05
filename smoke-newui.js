@@ -2,14 +2,13 @@
 //
 // Verifies:
 //   1) Page loads, no JS errors
-//   2) init-diagnostics or equivalent boot check passes
-//   3) Connection pill turns "connected" (proxy live)
-//   4) Pasted OpenAI key flows through to /openai/images via the proxy
+//   2) Connection pill turns "ok" (proxy live) or "checking" briefly
+//   3) Pasted OpenAI key flows through to /openai/images via the proxy
+//   4) Script parser still works and produces scene cards
 //   5) Provider select works
-//   6) Script parser still works
 //
 // Run:   cd /workspace/curtis-image-gen
-//        NODE_PATH=/usr/local/lib/node_modules node smoke-newui.js
+//        NODE_PATH=/usr/local/lib/node_modules OPENAI_KEY=sk-... node smoke-newui.js
 //   (set OPENAI_KEY env var to run a real roundtrip; otherwise the test
 //    only verifies the UI wiring)
 
@@ -56,23 +55,20 @@ const OPENAI_KEY = process.env.OPENAI_KEY || '';
   await page.goto(URL, { waitUntil: 'load' });
   await page.waitForTimeout(3000);
 
-  // 1. Connection pill
+  // 1. Connection pill (must be present and either ok or still checking)
   const pill = await page.evaluate(() => {
     const el = document.getElementById('connectionPill');
     return el ? { text: el.textContent?.trim(), classes: el.className, title: el.title } : null;
   });
   console.log('  connection pill:', JSON.stringify(pill));
   if(!pill) { console.error('FAIL: no #connectionPill element'); process.exit(1); }
-  if(!pill.classes.includes('connected') && !pill.classes.includes('checking')){
-    // allow "checking" briefly during boot
+  if(!pill.classes.includes('ok') && !pill.classes.includes('checking') && !pill.classes.includes('bad')) {
+    console.error('FAIL: pill has an unknown class:', pill.classes); process.exit(1);
   }
 
   // 2. Open settings dialog and paste OpenAI key
   console.log('=== opening settings dialog ===');
-  await page.evaluate(() => {
-    const b = document.getElementById('settingsButton');
-    if(b) b.click();
-  });
+  await page.evaluate(() => document.getElementById('settingsButton')?.click());
   await page.waitForTimeout(500);
 
   if(OPENAI_KEY){
@@ -92,11 +88,12 @@ const OPENAI_KEY = process.env.OPENAI_KEY || '';
     console.log('  paste result:', JSON.stringify(paste));
     await page.waitForTimeout(300);
     // Click the Save button (no auto-save on change in the new UI)
-    await page.evaluate(() => document.getElementById('saveSettingsButton').click());
+    await page.evaluate(() => document.getElementById('saveSettingsButton')?.click());
     await page.waitForTimeout(500);
     // Verify (localStorage — survives reloads)
     const saved = await page.evaluate(() => localStorage.getItem('curtis-studio:credentials:v2'));
     console.log('  saved credentials:', saved ? saved.slice(0, 50) + '...' : 'NULL');
+    if(!saved || !saved.includes('openaiKey')) { console.error('FAIL: key did not reach localStorage'); process.exit(1); }
     // Close settings
     await page.evaluate(() => {
       const d = document.getElementById('settingsDialog');
@@ -133,11 +130,15 @@ const OPENAI_KEY = process.env.OPENAI_KEY || '';
   const sceneCount = await page.evaluate(() => document.querySelectorAll('#sceneList > *').length);
   console.log('  scenes parsed:', sceneCount);
 
-  // 5. Click Generate
+  // 5. Click Generate (only if we have a real key)
   if(OPENAI_KEY){
     console.log('=== clicking Generate (with real OpenAI key) ===');
     await page.evaluate(() => document.getElementById('generateButton')?.click());
-    await page.waitForTimeout(25000); // give GPT Image 2 time
+    // 25s is enough for GPT Image 2 to return; the Sora 2 video phase
+    // would take much longer, but the image phase is what the smoke
+    // test cares about here. smoke-newui-video.js covers the full
+    // Sora 2 round-trip.
+    await page.waitForTimeout(25000);
   }
 
   // Final stats
