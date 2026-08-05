@@ -137,10 +137,17 @@ function setProgress(current, total, message) {
 }
 
 function updateGenerateLabel() {
-  const provider = elements.providerSelect.value;
-  elements.generateButton.textContent = provider === 'a2e'
-    ? 'Generate images + A2E clips'
-    : 'Generate scene images';
+  // The Generate button now always does BOTH images and videos in
+  // one click. The user used to have to click Generate, wait, then
+  // click Create video on every scene — they rightly called that
+  // "not happening." One click, all the assets, end of story.
+  const hasVideoKey = hasProviderKey('openai') || hasProviderKey('a2e');
+  elements.generateButton.textContent = hasVideoKey
+    ? 'Generate images + videos'
+    : 'Generate images';
+  elements.generateButton.title = hasVideoKey
+    ? 'Generates the scene image and the video clip for every scene in one click. OpenAI Sora 2 first for video, A2E fallback.'
+    : 'Add a video provider key in Settings to also generate clips.';
   updateCreateAllVideosButton();
 }
 
@@ -779,7 +786,7 @@ async function runSingleImage(scene) {
   await runPipeline([scene], false);
 }
 
-async function runPipeline(scenes = state.scenes, includeVideos = elements.providerSelect.value === 'a2e') {
+async function runPipeline(scenes = state.scenes, includeVideos = true) {
   if (state.running) return;
   const provider = elements.providerSelect.value;
   if (!state.reference) return setBanner('bad', 'Add a valid reference image first.');
@@ -856,19 +863,87 @@ async function runPipeline(scenes = state.scenes, includeVideos = elements.provi
       renderScenes();
 
       if (includeVideos) {
+        // Skip the entire video phase if no video provider key is
+        // configured. The user can add a key and re-run, or use
+        // the per-scene Recreate clip button later.
+        if (!hasProviderKey('openai') && !hasProviderKey('a2e')) {
+          scene.videoStatus = 'failed';
+          scene.videoError = 'No video provider key configured — add OpenAI or A2E in Settings to enable clips.';
+          log(`Scene ${scene.n}: no video provider key, skipping clip.`, 'warn');
+          completed += 1;
+          setProgress(completed, operations, `Scene ${scene.n} video skipped.`);
+          renderScenes();
+          continue;
+        }
         scene.videoStatus = 'running';
+        scene.videoError = null;
         renderScenes();
-        log(`Scene ${scene.n}: submitting A2E clip from the approved scene image.`);
-        scene.videoUrl = await generateA2EVideo(scene);
-        scene.videoStatus = 'done';
+        // Hybrid video path: OpenAI Sora 2 first, A2E on any error.
+        // Same logic as the per-scene Create video button so the
+        // one-click Generate and the per-scene button give the same
+        // result. setVideoError happens in the catch below.
+        try {
+          let url = null;
+          let vidProvider = 'openai';
+          if (hasProviderKey('openai')) {
+            try {
+              log(`Scene ${scene.n}: submitting Sora 2 clip.`);
+              url = await generateOpenAIVideo(scene);
+            } catch (openaiErr) {
+              if (hasProviderKey('a2e')) {
+                log(`Scene ${scene.n}: Sora 2 failed (${openaiErr.message}); falling back to A2E.`, 'warn');
+                url = await generateA2EVideo(scene);
+                vidProvider = 'a2e';
+              } else {
+                throw openaiErr;
+              }
+            }
+          } else if (hasProviderKey('a2e')) {
+            log(`Scene ${scene.n}: submitting A2E clip.`);
+            url = await generateA2EVideo(scene);
+            vidProvider = 'a2e';
+          }
+          // If neither provider has a key, just skip the video
+          // (the user can still get the images and add a key
+          // later for the next run). Don't fail the whole run.
+          scene.videoUrl = url;
+          scene.videoProvider = vidProvider;
+          scene.videoStatus = 'done';
+          scene.videoError = null;
+          // Best-effort album save
+          try {
+            const videoResponse = await fetch(url);
+            if (videoResponse.ok) {
+              const blob = await videoResponse.blob();
+              await saveToAlbum({
+                kind: 'video', blob,
+                prompt: sceneVideoPrompt(scene),
+                title: `Scene ${scene.n} — ${scene.title}`,
+                provider: vidProvider,
+                scene_n: scene.n,
+              });
+            }
+          } catch (e) { log(`Album clip save failed: ${e.message}`, 'warn'); }
+        } catch (vidErr) {
+          scene.videoStatus = 'failed';
+          scene.videoError = vidErr.message || String(vidErr);
+          scene.videoUrl = null;
+          log(`Scene ${scene.n} video failed: ${scene.videoError}`, 'error');
+          // Don't re-throw — a single failed video shouldn't stop
+          // the rest of the pipeline. The user can re-run a single
+          // scene's video from the scene card.
+        }
         completed += 1;
-        setProgress(completed, operations, `Scene ${scene.n} clip complete.`);
-        log(`Scene ${scene.n}: clip complete.`, 'success');
+        setProgress(completed, operations, `Scene ${scene.n} ${scene.videoStatus === 'done' ? 'clip complete' : 'video skipped'}.`);
+        log(scene.videoStatus === 'done'
+          ? `Scene ${scene.n}: clip complete.`
+          : `Scene ${scene.n}: video skipped (see card for details).`,
+          scene.videoStatus === 'done' ? 'success' : 'warn');
         renderScenes();
       }
     }
     setBanner('ok', includeVideos
-      ? 'All scene images and A2E clips are ready. Download clips from each scene.'
+      ? 'All scene images and clips are ready. Open the Album tab to download.'
       : 'All scene images are ready.');
     setProgress(operations, operations, 'Complete');
   } catch (error) {
