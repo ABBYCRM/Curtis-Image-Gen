@@ -8,6 +8,57 @@ const PROJECT_KEY = 'curtis-studio:project:v2';
 // tab close — that was a real footgun for non-technical users.)
 const SESSION_KEY = 'curtis-studio:credentials:v2';
 
+// All hard-coded limits and timings live here so they're easy to
+// find and tweak. Any value that has bitten us in production goes
+// in this block, with a comment explaining why.
+const LIMITS = {
+  // Script parser
+  MAX_SCENES: 50,                // hard cap on the number of scenes in one run
+  MAX_TITLE_CHARS: 120,          // fits comfortably in a scene card
+  MAX_DESCRIPTION_CHARS: 12000,  // ~3k words, well above any reasonable script
+  MAX_FIELD_CHARS: 4000,         // visual / voiceover per scene
+
+  // Reference image
+  REFERENCE_MAX_EDGE: 1600,      // px; the long edge is resized to this
+  REFERENCE_JPEG_QUALITY: 0.9,   // 0.9 looks visually lossless at 1600px
+  REFERENCE_MAX_FILE_BYTES: 12 * 1024 * 1024,  // 12 MB upload limit
+
+  // Album
+  ALBUM_DOWNLOAD_STAGGER_MS: 200, // delay between two bulk-downloads
+
+  // A2E polling (image + video)
+  A2E_POLL_MAX_ATTEMPTS: 72,     // ~3 minutes at the long end of the backoff
+  A2E_POLL_BASE_MS: 2500,
+  A2E_POLL_STEP_MS: 150,
+  A2E_POLL_CAP_MS: 6000,
+
+  // OpenAI Sora 2 polling
+  OPENAI_VIDEO_POLL_MAX_ATTEMPTS: 90,  // Sora 2 is slower than A2E
+  OPENAI_VIDEO_POLL_BASE_MS: 2500,
+  OPENAI_VIDEO_POLL_STEP_MS: 200,
+  OPENAI_VIDEO_POLL_CAP_MS: 6000,
+
+  // Cold-start UX
+  PROXY_HEALTHZ_TIMEOUT_MS: 8000,     // above this we assume Render free-tier cold start
+  PROXY_HEALTHZ_SLOW_THRESHOLD_MS: 3000,
+  GENERATION_RETRY_MAX: 1,             // retry a once on transient 5xx / network error
+  GENERATION_RETRY_BACKOFF_MS: 1500,
+};
+
+// OpenAI supported image sizes per aspect ratio
+const OPENAI_SIZES = {
+  '16:9': '1536x1024',
+  '9:16': '1024x1536',
+  '1:1':  '1024x1024',
+};
+
+// A2E resolution mapping
+const A2E_RESOLUTIONS = {
+  low:    '1K',
+  medium: '2K',
+  high:   '4K',
+};
+
 const elements = Object.fromEntries([
   'connectionPill', 'banner', 'referenceDrop', 'referenceFile', 'referenceUrl',
   'referencePreview', 'referenceEmpty', 'clearReferenceButton', 'scriptInput',
@@ -48,6 +99,7 @@ function saveCredentials() {
   };
   localStorage.setItem(SESSION_KEY, JSON.stringify(credentials));
   updateGenerateLabel();
+  updateCreateAllVideosButton();
   setBanner('ok', 'Credentials saved in this browser. They survive page reloads. Use Wipe to clear.');
 }
 
@@ -89,6 +141,27 @@ function updateGenerateLabel() {
   elements.generateButton.textContent = provider === 'a2e'
     ? 'Generate images + A2E clips'
     : 'Generate scene images';
+  updateCreateAllVideosButton();
+}
+
+// Enable Create all videos only when at least one scene has an
+// image ready and at least one video provider key is configured.
+// The button is always visible (so the user can see the option
+// exists) but disabled with a helpful title when there's nothing
+// to create.
+function updateCreateAllVideosButton() {
+  if (!elements.createAllVideosButton) return;
+  const hasVideoProvider = hasProviderKey('openai') || hasProviderKey('a2e');
+  const hasImageReady = state.scenes.some((s) => s.imageUrl);
+  const ready = hasVideoProvider && hasImageReady && !state.running;
+  elements.createAllVideosButton.disabled = !ready;
+  elements.createAllVideosButton.title = !hasVideoProvider
+    ? 'Add an OpenAI or A2E key in Settings to enable video generation.'
+    : !hasImageReady
+      ? 'Generate scene images first — clips need a source frame.'
+      : state.running
+        ? 'Generation already in progress…'
+        : 'OpenAI Sora 2 first, A2E as fallback.';
 }
 
 function projectSnapshot() {
@@ -131,13 +204,13 @@ function loadProject() {
     elements.qualitySelect.value = ['low', 'medium', 'high'].includes(project.quality) ? project.quality : 'medium';
     elements.styleInput.value = typeof project.style === 'string' ? project.style : elements.styleInput.value;
     state.scenes = Array.isArray(project.scenes)
-      ? project.scenes.slice(0, 50).map((scene, index) => ({
+      ? project.scenes.slice(0, LIMITS.MAX_SCENES).map((scene, index) => ({
           id: typeof scene.id === 'string' ? scene.id : createId(),
           n: index + 1,
-          title: String(scene.title || `Scene ${index + 1}`).slice(0, 120),
-          description: String(scene.description || '').slice(0, 12000),
-          visual: String(scene.visual || '').slice(0, 4000),
-          voiceover: String(scene.voiceover || '').slice(0, 4000),
+          title: String(scene.title || `Scene ${index + 1}`).slice(0, LIMITS.MAX_TITLE_CHARS),
+          description: String(scene.description || '').slice(0, LIMITS.MAX_DESCRIPTION_CHARS),
+          visual: String(scene.visual || '').slice(0, LIMITS.MAX_FIELD_CHARS),
+          voiceover: String(scene.voiceover || '').slice(0, LIMITS.MAX_FIELD_CHARS),
           imageStatus: 'idle', videoStatus: 'idle', imageUrl: null, videoUrl: null,
         }))
       : [];
@@ -263,6 +336,7 @@ function renderScenes() {
     return;
   }
   for (const scene of state.scenes) elements.sceneList.append(makeSceneCard(scene));
+  updateCreateAllVideosButton();
 }
 
 function renumberScenes() {
@@ -295,14 +369,14 @@ function parseScript(text) {
   } else {
     blocks.push(...source.split(/^\s*---\s*$/m).map((block) => block.trim()).filter(Boolean));
   }
-  return blocks.slice(0, 50).map((block, index) => {
+  return blocks.slice(0, LIMITS.MAX_SCENES).map((block, index) => {
     const lines = block.split(/\r?\n/);
     let titleLine = lines.shift()?.trim() || `Scene ${index + 1}`;
     titleLine = titleLine.replace(/^\[[^\]]+\]\s*/i, '').replace(/^Scene\s+\d+\s*:\s*/i, '');
     const description = lines.join('\n').trim() || titleLine;
     const fields = extractFields(description);
     return {
-      id: createId(), n: index + 1, title: titleLine.slice(0, 120), description,
+      id: createId(), n: index + 1, title: titleLine.slice(0, LIMITS.MAX_TITLE_CHARS), description,
       visual: fields.visual, voiceover: fields.voiceover,
       imageStatus: 'idle', videoStatus: 'idle', imageUrl: null, videoUrl: null,
     };
@@ -310,9 +384,7 @@ function parseScript(text) {
 }
 
 function aspectToOpenAISize(aspect) {
-  if (aspect === '9:16') return '1024x1536';
-  if (aspect === '1:1') return '1024x1024';
-  return '1536x1024';
+  return OPENAI_SIZES[aspect] || OPENAI_SIZES['16:9'];
 }
 
 function sceneImagePrompt(scene) {
@@ -335,21 +407,40 @@ function sceneVideoPrompt(scene) {
 }
 
 async function apiRequest(path, provider, options = {}) {
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers: { ...providerHeaders(provider), ...(options.headers || {}) },
-    signal: state.abortController?.signal,
-  });
-  const text = await response.text();
-  let body;
-  try { body = JSON.parse(text); } catch { body = { friendly: text.slice(0, 500) }; }
-  if (!response.ok) {
-    const error = new Error(body.friendly || body?.error?.message || `HTTP ${response.status}`);
-    error.retryable = Boolean(body.retryable);
-    error.status = response.status;
-    throw error;
+  // Retry once on transient errors (5xx, network). Up to
+  // GENERATION_RETRY_MAX retries with a small backoff. The
+  // generation abort signal still wins: if the user clicks
+  // Stop, the AbortError propagates and the retry does not
+  // run.
+  let attempt = 0;
+  while (true) {
+    try {
+      const response = await fetch(`${API_BASE}${path}`, {
+        ...options,
+        headers: { ...providerHeaders(provider), ...(options.headers || {}) },
+        signal: state.abortController?.signal,
+      });
+      const text = await response.text();
+      let body;
+      try { body = JSON.parse(text); } catch { body = { friendly: text.slice(0, 500) }; }
+      if (!response.ok) {
+        const error = new Error(body.friendly || body?.error?.message || `HTTP ${response.status}`);
+        error.retryable = Boolean(body.retryable) || response.status >= 500;
+        error.status = response.status;
+        throw error;
+      }
+      return body;
+    } catch (error) {
+      const transient = !error.status
+        || error.status === 429
+        || (error.status >= 500 && error.status < 600)
+        || error.retryable;
+      if (!transient || attempt >= LIMITS.GENERATION_RETRY_MAX) throw error;
+      attempt += 1;
+      log(`${path} failed (${error.message}); retrying in ${LIMITS.GENERATION_RETRY_BACKOFF_MS}ms…`, 'warn');
+      await sleep(LIMITS.GENERATION_RETRY_BACKOFF_MS);
+    }
   }
-  return body;
 }
 
 function a2eJobId(body) {
@@ -365,7 +456,7 @@ function a2eState(body) {
 }
 
 async function pollA2E(kind, id) {
-  for (let attempt = 0; attempt < 72; attempt += 1) {
+  for (let attempt = 0; attempt < LIMITS.A2E_POLL_MAX_ATTEMPTS; attempt += 1) {
     const body = await apiRequest(`/a2e/status?kind=${encodeURIComponent(kind)}&id=${encodeURIComponent(id)}`, 'a2e', { method: 'GET' });
     const status = a2eState(body);
     const data = body.data || body;
@@ -375,7 +466,7 @@ async function pollA2E(kind, id) {
         : data.result_url || data.video_url || data.output_url;
     }
     if (status === 'failed') throw new Error(data.failed_message || data.error || `A2E ${kind} job failed.`);
-    await sleep(Math.min(2500 + attempt * 150, 6000));
+    await sleep(Math.min(LIMITS.A2E_POLL_BASE_MS + attempt * LIMITS.A2E_POLL_STEP_MS, LIMITS.A2E_POLL_CAP_MS));
   }
   throw new Error(`A2E ${kind} job timed out.`);
 }
@@ -412,7 +503,7 @@ async function generateA2EImage(scene) {
       prompt: sceneImagePrompt(scene),
       input_images: state.reference ? [state.reference] : [],
       aspectRatio: elements.aspectSelect.value,
-      resolution: elements.qualitySelect.value === 'high' ? '4K' : elements.qualitySelect.value === 'low' ? '1K' : '2K',
+      resolution: A2E_RESOLUTIONS[elements.qualitySelect.value] || A2E_RESOLUTIONS.medium,
     }),
   });
   const id = a2eJobId(body);
@@ -465,7 +556,7 @@ async function generateOpenAIVideo(scene) {
 }
 
 async function pollOpenAIVideo(jobId) {
-  for (let attempt = 0; attempt < 90; attempt += 1) {
+  for (let attempt = 0; attempt < LIMITS.OPENAI_VIDEO_POLL_MAX_ATTEMPTS; attempt += 1) {
     const body = await apiRequest(`/openai/videos/${encodeURIComponent(jobId)}`, 'openai', { method: 'GET' });
     if (body.status === 'completed' && body.video_url) {
       // The proxy URL is relative; resolve against the proxy base so the
@@ -480,7 +571,7 @@ async function pollOpenAIVideo(jobId) {
     if (body.status === 'failed') {
       throw new Error(body.error?.message || 'OpenAI video generation failed.');
     }
-    await sleep(Math.min(2500 + attempt * 200, 6000));
+    await sleep(Math.min(LIMITS.OPENAI_VIDEO_POLL_BASE_MS + attempt * LIMITS.OPENAI_VIDEO_POLL_STEP_MS, LIMITS.OPENAI_VIDEO_POLL_CAP_MS));
   }
   throw new Error('OpenAI video job timed out.');
 }
@@ -988,7 +1079,7 @@ function downloadAllImages() {
   if (!scenes.length) return setBanner('warn', 'No scene images are ready yet.');
   setBanner('info', `Downloading ${scenes.length} image${scenes.length === 1 ? '' : 's'}…`);
   scenes.forEach((scene, index) => {
-    setTimeout(() => downloadAsset(scene.imageUrl, `scene-${scene.n}.png`, 'image/png'), index * 200);
+    setTimeout(() => downloadAsset(scene.imageUrl, `scene-${scene.n}.png`, 'image/png'), index * LIMITS.ALBUM_DOWNLOAD_STAGGER_MS);
   });
 }
 
@@ -997,22 +1088,21 @@ function downloadAllVideos() {
   if (!scenes.length) return setBanner('warn', 'No scene clips are ready yet.');
   setBanner('info', `Downloading ${scenes.length} clip${scenes.length === 1 ? '' : 's'}…`);
   scenes.forEach((scene, index) => {
-    setTimeout(() => downloadAsset(scene.videoUrl, `scene-${scene.n}.mp4`, 'video/mp4'), index * 200);
+    setTimeout(() => downloadAsset(scene.videoUrl, `scene-${scene.n}.mp4`, 'video/mp4'), index * LIMITS.ALBUM_DOWNLOAD_STAGGER_MS);
   });
 }
 
 async function resizeImage(file) {
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) throw new Error('Choose a JPEG, PNG, or WebP image.');
-  if (file.size > 12 * 1024 * 1024) throw new Error('Image must be 12 MB or smaller.');
+  if (file.size > LIMITS.REFERENCE_MAX_FILE_BYTES) throw new Error('Image must be 12 MB or smaller.');
   const source = await createImageBitmap(file);
-  const max = 1600;
-  const scale = Math.min(1, max / Math.max(source.width, source.height));
+  const scale = Math.min(1, LIMITS.REFERENCE_MAX_EDGE / Math.max(source.width, source.height));
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(source.width * scale));
   canvas.height = Math.max(1, Math.round(source.height * scale));
   canvas.getContext('2d', { alpha: false }).drawImage(source, 0, 0, canvas.width, canvas.height);
   source.close();
-  return canvas.toDataURL('image/jpeg', .9);
+  return canvas.toDataURL('image/jpeg', LIMITS.REFERENCE_JPEG_QUALITY);
 }
 
 async function setReferenceFile(file) {
@@ -1128,10 +1218,22 @@ async function blobToDataUrl(blob) {
 async function probeProxy() {
   elements.connectionPill.className = 'pill checking';
   elements.connectionPill.textContent = 'Checking proxy…';
+  const started = Date.now();
   try {
-    const response = await fetch(`${API_BASE}/healthz`, { cache: 'no-store' });
+    // Use an AbortController so a slow /healthz (Render free-tier
+    // cold start can take 30-60s) doesn't hang the banner forever.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), LIMITS.PROXY_HEALTHZ_TIMEOUT_MS);
+    let response;
+    try {
+      response = await fetch(`${API_BASE}/healthz`, { cache: 'no-store', signal: controller.signal });
+    } finally { clearTimeout(timer); }
     const body = await response.json();
     if (!response.ok || !body.ok) throw new Error(`HTTP ${response.status}`);
+    const elapsed = Date.now() - started;
+    if (elapsed > LIMITS.PROXY_HEALTHZ_SLOW_THRESHOLD_MS) {
+      log(`Proxy woke up in ${(elapsed/1000).toFixed(1)}s — Render free-tier cold start is the usual cause.`);
+    }
     elements.connectionPill.className = 'pill ok';
     elements.connectionPill.textContent = `Proxy online · v${body.version || '?'}`;
   } catch (error) {
@@ -1222,6 +1324,10 @@ function wireEvents() {
   elements.scriptInput.addEventListener('change', saveProject);
   elements.generateButton.addEventListener('click', () => runPipeline());
   elements.createAllVideosButton.addEventListener('click', () => runAllVideos());
+  // The Create all videos button is only useful when at least one
+  // scene is image-ready and at least one video provider key is
+  // configured. Disabled state is updated after every state change
+  // by updateCreateAllVideosButton().
   elements.stopButton.addEventListener('click', () => state.abortController?.abort());
   elements.downloadAllImagesButton.addEventListener('click', downloadAllImages);
   elements.downloadAllVideosButton.addEventListener('click', downloadAllVideos);
