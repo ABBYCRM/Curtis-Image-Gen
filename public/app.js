@@ -509,6 +509,7 @@ async function runSingleVideo(scene) {
   renderScenes();
   try {
     let url = null;
+    let provider = 'openai';
     if (useOpenAI) {
       try {
         log(`Scene ${scene.n}: submitting Sora 2 clip (OpenAI).`);
@@ -517,6 +518,7 @@ async function runSingleVideo(scene) {
         if (useA2E) {
           log(`Scene ${scene.n}: Sora 2 failed (${openaiErr.message}); falling back to A2E.`, 'warn');
           url = await generateA2EVideo(scene);
+          provider = 'a2e';
         } else {
           throw openaiErr;
         }
@@ -524,8 +526,10 @@ async function runSingleVideo(scene) {
     } else {
       log(`Scene ${scene.n}: submitting A2E clip.`);
       url = await generateA2EVideo(scene);
+      provider = 'a2e';
     }
     scene.videoUrl = url;
+    scene.videoProvider = provider;
     scene.videoStatus = 'done';
     log(`Scene ${scene.n}: clip complete.`, 'success');
     setBanner('ok', `Scene ${scene.n} clip ready — click Download clip.`);
@@ -538,7 +542,7 @@ async function runSingleVideo(scene) {
           kind: 'video', blob,
           prompt: sceneVideoPrompt(scene),
           title: `Scene ${scene.n} — ${scene.title}`,
-          provider: scene.videoProvider || 'openai',
+          provider,
           scene_n: scene.n,
         });
       }
@@ -576,6 +580,7 @@ async function runAllVideos() {
     renderScenes();
     try {
       let url = null;
+      let provider = 'openai';
       if (hasProviderKey('openai')) {
         try {
           log(`Scene ${scene.n}: submitting Sora 2 clip.`);
@@ -584,6 +589,7 @@ async function runAllVideos() {
           if (hasProviderKey('a2e')) {
             log(`Scene ${scene.n}: Sora 2 failed (${openaiErr.message}); falling back to A2E.`, 'warn');
             url = await generateA2EVideo(scene);
+            provider = 'a2e';
           } else {
             throw openaiErr;
           }
@@ -591,8 +597,10 @@ async function runAllVideos() {
       } else {
         log(`Scene ${scene.n}: submitting A2E clip.`);
         url = await generateA2EVideo(scene);
+        provider = 'a2e';
       }
       scene.videoUrl = url;
+      scene.videoProvider = provider;
       scene.videoStatus = 'done';
       log(`Scene ${scene.n}: clip complete.`, 'success');
       // Save the clip to the album. The proxy already auto-saves
@@ -607,7 +615,7 @@ async function runAllVideos() {
             kind: 'video', blob,
             prompt: sceneVideoPrompt(scene),
             title: `Scene ${scene.n} — ${scene.title}`,
-            provider: scene.videoProvider || 'openai',
+            provider,
             scene_n: scene.n,
           });
         }
@@ -874,9 +882,17 @@ async function saveToAlbum({ kind, blob, prompt, title, provider, scene_n }) {
     if (title) params.set('title', title);
     if (provider) params.set('provider', provider);
     if (typeof scene_n === 'number') params.set('scene_n', String(scene_n));
+    // Forward x-app-token so the album upload still works when the
+    // operator has set APP_PROXY_TOKEN on the proxy. Without this,
+    // a configured proxy token silently rejects every album write
+    // with HTTP 401, and the user sees "Album save failed" in the
+    // log with no obvious cause.
+    const headers = { 'Content-Type': mime };
+    const credentials = readCredentials();
+    if (credentials.appToken) headers['x-app-token'] = credentials.appToken;
     const response = await fetch(`${API_BASE}/album/upload?${params}`, {
       method: 'POST',
-      headers: { 'Content-Type': mime },
+      headers,
       body: blob,
     });
     if (!response.ok) {
