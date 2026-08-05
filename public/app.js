@@ -92,9 +92,14 @@ function updateGenerateLabel() {
 }
 
 function projectSnapshot() {
+  // Note: state.reference is intentionally NOT included here. The
+  // reference image is a data: URL that can be 0.8-2.5 MB; storing it
+  // in the project blob in localStorage was the source of the quota
+  // bomb that silently lost the user's work. The reference now lives
+  // in IndexedDB (see idb.js) and is fetched on demand.
   return {
     version: 2,
-    reference: state.reference,
+    reference_present: state.reference ? 'data' : null,
     script: elements.scriptInput.value,
     provider: elements.providerSelect.value,
     aspect: elements.aspectSelect.value,
@@ -116,7 +121,10 @@ function loadProject() {
   try {
     const project = JSON.parse(localStorage.getItem(PROJECT_KEY) || 'null');
     if (!project || project.version !== 2) return;
-    state.reference = typeof project.reference === 'string' ? project.reference : null;
+    // The reference now lives in IndexedDB; load it asynchronously.
+    // We don't await it here so the rest of the UI (script, scenes,
+    // settings) renders immediately. The reference drop will fill in
+    // once the IndexedDB read returns.
     elements.scriptInput.value = typeof project.script === 'string' ? project.script : '';
     elements.providerSelect.value = ['openai', 'a2e'].includes(project.provider) ? project.provider : 'openai';
     elements.aspectSelect.value = ['16:9', '9:16', '1:1'].includes(project.aspect) ? project.aspect : '16:9';
@@ -136,6 +144,13 @@ function loadProject() {
     renderReference();
     renderScenes();
     updateGenerateLabel();
+    // Pull the reference from IndexedDB (with a fallback to the
+    // legacy localStorage field for users who had a v1 save before
+    // the migration — that field is the *only* place the old
+    // reference could have been, and we silently retire it now).
+    loadReferenceFromIdb().catch((err) => {
+      log(`Reference could not be restored: ${err.message}`, 'warn');
+    });
   } catch (error) {
     log(`Saved project was ignored: ${error.message}`, 'error');
   }
@@ -721,6 +736,24 @@ async function runPipeline(scenes = state.scenes, includeVideos = elements.provi
   }
 }
 
+async function migrateLegacyReference() {
+  if (!globalThis.CurtisIndexedDb?.isAvailable()) return;
+  // If the user already has a v2 reference in IndexedDB, skip the
+  // migration — the most recent upload wins.
+  const existing = await globalThis.CurtisIndexedDb.getReference();
+  if (existing) return;
+  // Look for a v1-style project blob that still inlines the
+  // reference field. If we find one, copy the data URL into
+  // IndexedDB and rewrite the project blob to the v2 shape.
+  let project;
+  try { project = JSON.parse(localStorage.getItem(PROJECT_KEY) || 'null'); }
+  catch { return; }
+  if (!project || project.version !== 2) return;
+  if (typeof project.reference !== 'string' || !project.reference.startsWith('data:')) return;
+  await globalThis.CurtisIndexedDb.putReference(project.reference);
+  log('Migrated reference image from localStorage to IndexedDB.');
+}
+
 // ----- Tabs -----
 function switchTab(name) {
   if (!name) return;
@@ -984,7 +1017,9 @@ async function resizeImage(file) {
 
 async function setReferenceFile(file) {
   try {
-    state.reference = await resizeImage(file);
+    const dataUrl = await resizeImage(file);
+    await saveReferenceToIdb(dataUrl);
+    state.reference = dataUrl;
     elements.referenceUrl.value = '';
     renderReference();
     saveProject();
@@ -1000,16 +1035,94 @@ async function setReferenceUrl() {
   let url;
   try { url = new URL(value); } catch { return setBanner('bad', 'Enter a valid HTTPS image URL.'); }
   if (url.protocol !== 'https:') return setBanner('bad', 'Reference URLs must use HTTPS.');
-  const testImage = new Image();
-  testImage.referrerPolicy = 'no-referrer';
-  testImage.onload = () => {
-    state.reference = value;
+  // Fetch the URL through the proxy so the bytes live on the same
+  // origin we serve from. The proxy's /album/save-from-url will
+  // download the URL, run the SSRF guard, and write the bytes into
+  // a data URL we can put in IndexedDB. If the proxy is offline
+  // we fall back to using the URL directly (the front-end can send
+  // an HTTPS URL as input_reference to GPT Image 2 / A2E without
+  // conversion).
+  try {
+    const credentials = readCredentials();
+    const headers = { 'Content-Type': 'application/json' };
+    if (credentials.appToken) headers['x-app-token'] = credentials.appToken;
+    const response = await fetch(`${API_BASE}/album/save-from-url`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        kind: 'image',
+        url: value,
+        prompt: 'reference image',
+        title: 'Reference (from URL)',
+      }),
+    });
+    if (response.ok) {
+      const body = await response.json();
+      // Re-read the bytes from the album so we end up with a data
+      // URL in IndexedDB. This costs one round-trip but keeps the
+      // SSRF guard, the size probe, and the same-origin story
+      // consistent for both file uploads and URL references.
+      const r2 = await fetch(`${API_BASE}${body.url}`);
+      if (r2.ok) {
+        const blob = await r2.blob();
+        const dataUrl = await blobToDataUrl(blob);
+        await saveReferenceToIdb(dataUrl);
+        state.reference = dataUrl;
+        renderReference();
+        saveProject();
+        setBanner('ok', 'Reference URL loaded through the proxy.');
+        return;
+      }
+    }
+  } catch { /* fall through to direct-URL path */ }
+  // Fallback: keep the URL as-is. The provider endpoints accept an
+  // HTTPS URL for input_reference; the proxy resizes with sharp if
+  // needed. This is the behavior we had before the IndexedDB
+  // migration, kept for resilience.
+  state.reference = value;
+  renderReference();
+  saveProject();
+  setBanner('ok', 'Reference URL loaded (direct — proxy offline?).');
+}
+
+async function saveReferenceToIdb(dataUrl) {
+  if (!globalThis.CurtisIndexedDb?.isAvailable()) {
+    log('IndexedDB unavailable; reference will not survive a reload.', 'warn');
+    return;
+  }
+  try {
+    await globalThis.CurtisIndexedDb.putReference(dataUrl);
+  } catch (error) {
+    log(`Reference could not be written to IndexedDB: ${error.message}`, 'warn');
+  }
+}
+
+async function loadReferenceFromIdb() {
+  if (!globalThis.CurtisIndexedDb?.isAvailable()) return;
+  const dataUrl = await globalThis.CurtisIndexedDb.getReference();
+  if (dataUrl) {
+    state.reference = dataUrl;
     renderReference();
-    saveProject();
-    setBanner('ok', 'Reference URL loaded.');
-  };
-  testImage.onerror = () => setBanner('bad', 'The reference URL could not be loaded as an image.');
-  testImage.src = value;
+  }
+}
+
+async function clearReferenceInIdb() {
+  if (!globalThis.CurtisIndexedDb?.isAvailable()) return;
+  try { await globalThis.CurtisIndexedDb.deleteReference(); }
+  catch (error) { log(`IndexedDB clear failed: ${error.message}`, 'warn'); }
+}
+
+// Blob -> data URL (manual base64 path so we don't fight the CSP).
+async function blobToDataUrl(blob) {
+  const arrayBuffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(arrayBuffer);
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  const base64 = btoa(binary);
+  return `data:${blob.type || 'application/octet-stream'};base64,${base64}`;
 }
 
 async function probeProxy() {
@@ -1058,12 +1171,13 @@ function wireEvents() {
     if (file) setReferenceFile(file);
   });
   elements.referenceUrl.addEventListener('change', setReferenceUrl);
-  elements.clearReferenceButton.addEventListener('click', () => {
+  elements.clearReferenceButton.addEventListener('click', async () => {
     state.reference = null;
     elements.referenceUrl.value = '';
     elements.referenceFile.value = '';
     renderReference();
     saveProject();
+    await clearReferenceInIdb();
     setBanner('info', 'Reference cleared.');
   });
   for (const eventName of ['dragenter', 'dragover']) {
@@ -1139,6 +1253,10 @@ function init() {
   elements.a2eKeyInput.value = credentials.a2eKey || '';
   elements.appTokenInput.value = credentials.appToken || '';
   wireEvents();
+  // One-time migration: if a v1 project blob had a reference field
+  // inlined as a data URL, copy it to IndexedDB and clear the legacy
+  // field. v2 snapshots use reference_present instead.
+  migrateLegacyReference().catch(() => {});
   loadProject();
   switchTab('setup');
   refreshAlbum();
