@@ -278,7 +278,29 @@ function makeSceneCard(scene) {
         : 'idle';
   status.className = `status ${combined}`;
   status.textContent = combined;
+  // Surface the last error on the badge so the user can see it
+  // without scrolling to the run log. The combined status already
+  // reflects image + video; pick the most recent error to display.
+  const lastError = scene.videoError || scene.imageError;
+  if (lastError && combined === 'failed') {
+    status.title = lastError;
+    status.classList.add('has-error');
+  }
   titleRow.append(title, status);
+
+  // Inline error message — visible on the card itself when the
+  // image or video failed. Without this, a 'failed' status badge
+  // told the user nothing about WHY, and they had to scroll to the
+  // run log at the bottom of the Scenes panel.
+  if (lastError && combined === 'failed') {
+    const errorBanner = document.createElement('p');
+    errorBanner.className = 'scene-error';
+    errorBanner.textContent = lastError;
+    body.append(titleRow);
+    body.append(errorBanner);
+  } else {
+    body.append(titleRow);
+  }
 
   const description = document.createElement('textarea');
   description.value = scene.description;
@@ -295,13 +317,19 @@ function makeSceneCard(scene) {
   actions.className = 'button-row compact';
   const imageButton = actionButton('Regenerate image', async () => runSingleImage(scene));
   actions.append(imageButton);
-  // Create video — wired to OpenAI sora-2 with A2E as fallback
-  const videoButton = actionButton(
-    scene.videoUrl ? 'Recreate clip' : 'Create video',
-    async () => runSingleVideo(scene)
-  );
-  videoButton.title = 'Uses OpenAI Sora 2 first; falls back to A2E automatically.';
-  actions.append(videoButton);
+  // Create video — only when there's an image to animate from.
+  // Previously the button was always visible, which led to "why is
+  // it failing when I click Create video with no image?" confusion.
+  // (The runSingleVideo guard refused anyway, but the user had to
+  // click to find out.)
+  if (scene.imageUrl) {
+    const videoButton = actionButton(
+      scene.videoUrl ? 'Recreate clip' : 'Create video',
+      async () => runSingleVideo(scene)
+    );
+    videoButton.title = 'Uses OpenAI Sora 2 first; falls back to A2E automatically.';
+    actions.append(videoButton);
+  }
   if (scene.imageUrl) actions.append(actionButton('Download image', () => downloadAsset(scene.imageUrl, `scene-${scene.n}.png`, 'image/png'), 'ghost'));
   if (scene.videoUrl) actions.append(actionButton('Download clip', () => downloadAsset(scene.videoUrl, `scene-${scene.n}.mp4`, 'video/mp4'), 'ghost'));
   actions.append(actionButton('Delete', () => {
@@ -311,7 +339,7 @@ function makeSceneCard(scene) {
     saveProject();
   }, 'danger'));
 
-  body.append(titleRow, description, actions);
+  body.append(description, actions);
   card.append(media, body);
   return card;
 }
@@ -611,6 +639,7 @@ async function runSingleVideo(scene) {
   state.running = true;
   state.abortController = new AbortController();
   scene.videoStatus = 'running';
+  scene.videoError = null;
   scene.videoUrl = null;
   renderScenes();
   try {
@@ -637,6 +666,7 @@ async function runSingleVideo(scene) {
     scene.videoUrl = url;
     scene.videoProvider = provider;
     scene.videoStatus = 'done';
+    scene.videoError = null;
     log(`Scene ${scene.n}: clip complete.`, 'success');
     setBanner('ok', `Scene ${scene.n} clip ready — click Download clip.`);
     // Save the clip to the album (best-effort).
@@ -655,6 +685,7 @@ async function runSingleVideo(scene) {
     } catch (e) { log(`Album clip save failed: ${e.message}`, 'warn'); }
   } catch (error) {
     scene.videoStatus = 'failed';
+    scene.videoError = error.message || String(error);
     setBanner('bad', error.message);
     log(`Scene ${scene.n} video failed: ${error.message}`, 'error');
   } finally {
@@ -682,6 +713,7 @@ async function runAllVideos() {
   for (const scene of scenes) {
     if (!scene.imageUrl && !state.reference) continue;
     scene.videoStatus = 'running';
+    scene.videoError = null;
     scene.videoUrl = null;
     renderScenes();
     try {
@@ -708,6 +740,7 @@ async function runAllVideos() {
       scene.videoUrl = url;
       scene.videoProvider = provider;
       scene.videoStatus = 'done';
+      scene.videoError = null;
       log(`Scene ${scene.n}: clip complete.`, 'success');
       // Save the clip to the album. The proxy already auto-saves
       // successful /openai/videos responses, but we send it again from
@@ -728,6 +761,7 @@ async function runAllVideos() {
       } catch (e) { log(`Album clip save failed: ${e.message}`, 'warn'); }
     } catch (error) {
       scene.videoStatus = 'failed';
+      scene.videoError = error.message || String(error);
       log(`Scene ${scene.n} video failed: ${error.message}`, 'error');
     }
     done += 1;
@@ -768,13 +802,41 @@ async function runPipeline(scenes = state.scenes, includeVideos = elements.provi
     setBanner('info', `Generating with ${provider === 'openai' ? 'GPT Image 2' : 'A2E'}…`);
     for (const scene of scenes) {
       scene.imageStatus = 'running';
+      scene.imageError = null;
       scene.imageUrl = null;
       renderScenes();
       log(`Scene ${scene.n}: submitting image to ${provider}.`);
-      scene.imageUrl = provider === 'openai'
-        ? await generateOpenAIImage(scene)
-        : await generateA2EImage(scene);
+      try {
+        // Try the user's selected provider first; on any failure
+        // (auth, content moderation, size, network) fall back to
+        // A2E if the user has a key for it. The fallback was only
+        // present on the video path before — the image path silently
+        // failed if OpenAI rejected the request, leaving the user
+        // with a 'failed' card and no clue.
+        if (provider === 'openai') {
+          try {
+            scene.imageUrl = await generateOpenAIImage(scene);
+          } catch (openaiErr) {
+            if (hasProviderKey('a2e')) {
+              log(`Scene ${scene.n}: OpenAI image failed (${openaiErr.message}); falling back to A2E.`, 'warn');
+              scene.imageUrl = await generateA2EImage(scene);
+              scene.imageProvider = 'a2e';
+            } else {
+              throw openaiErr;
+            }
+          }
+        } else {
+          scene.imageUrl = await generateA2EImage(scene);
+          scene.imageProvider = 'a2e';
+        }
+      } catch (imgErr) {
+        scene.imageStatus = 'failed';
+        scene.imageError = imgErr.message || String(imgErr);
+        scene.imageUrl = null;
+        throw imgErr;
+      }
       scene.imageStatus = 'done';
+      scene.imageError = null;
       // Save a copy to the album so the user can re-download it from
       // the Album tab. Best-effort — failures here are logged but do
       // not fail the image response.
@@ -784,7 +846,7 @@ async function runPipeline(scenes = state.scenes, includeVideos = elements.provi
           kind: 'image', blob,
           prompt: sceneImagePrompt(scene),
           title: `Scene ${scene.n} — ${scene.title}`,
-          provider,
+          provider: scene.imageProvider || provider,
           scene_n: scene.n,
         });
       } catch (e) { log(`Album image save failed: ${e.message}`, 'warn'); }
@@ -812,8 +874,14 @@ async function runPipeline(scenes = state.scenes, includeVideos = elements.provi
   } catch (error) {
     const stopped = error.name === 'AbortError';
     for (const scene of scenes) {
-      if (scene.imageStatus === 'running') scene.imageStatus = stopped ? 'idle' : 'failed';
-      if (scene.videoStatus === 'running') scene.videoStatus = stopped ? 'idle' : 'failed';
+      if (scene.imageStatus === 'running') {
+        scene.imageStatus = stopped ? 'idle' : 'failed';
+        if (!stopped) scene.imageError = error.message || String(error);
+      }
+      if (scene.videoStatus === 'running') {
+        scene.videoStatus = stopped ? 'idle' : 'failed';
+        if (!stopped) scene.videoError = error.message || String(error);
+      }
     }
     setBanner(stopped ? 'warn' : 'bad', stopped ? 'Generation stopped.' : error.message);
     log(stopped ? 'Generation stopped by user.' : error.message, stopped ? '' : 'error');
