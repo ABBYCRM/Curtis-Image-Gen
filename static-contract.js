@@ -16,6 +16,35 @@ const js = fs.readFileSync(path.join(root, 'public/app.js'), 'utf8');
 const idb = fs.readFileSync(path.join(root, 'public/idb.js'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'public/styles.css'), 'utf8');
 
+// --- Design tokens: every --token defined must be used; every
+//     var(--token) must reference a defined token. Catches dead
+//     tokens and broken references. ---
+const definedTokens = new Set();
+for (const m of css.matchAll(/--([a-z][a-z0-9-]+)\s*:/g)) definedTokens.add(m[1]);
+const usedTokens = new Set();
+for (const m of css.matchAll(/var\(--([a-z][a-z0-9-]+)/g)) usedTokens.add(m[1]);
+const dead = [...definedTokens].filter((d) => !usedTokens.has(d));
+if (dead.length) throw new Error(`Dead design tokens (defined, never used): ${dead.join(', ')}`);
+const brokenRefs = [...usedTokens].filter((u) => !definedTokens.has(u));
+if (brokenRefs.length) throw new Error(`Broken design tokens (referenced, not defined): ${brokenRefs.join(', ')}`);
+
+// --- Cascade layer declaration: the design system depends on
+//     the explicit ordering. ---
+if (!/^@layer reset, tokens, base, components,/, /^@layer reset,$|^@layer reset \{/.test(css)) {
+  // The strict regex above checks for the @layer ordering directive.
+  const layerOrder = (css.match(/^@layer\s+([\w,\s]+);/m) || ['', ''])[1].trim();
+  if (layerOrder !== 'reset, tokens, base, components, utilities, overrides') {
+    throw new Error(`Cascade layer order changed: "${layerOrder}". Update the contract if intentional.`);
+  }
+}
+
+// --- One component language: one radius, one spacing, one shadow.
+//     These checks catch the most common drift — a developer adds
+//     a new hex color or hard-coded px radius. ---
+if (/border-radius:\s*\d+px[^0-9]/i.test(css)) {
+  throw new Error('Found hard-coded px border-radius; use a --radius-* token.');
+}
+
 // --- HTML: every id we use must be defined, and unique. ---
 const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]);
 const duplicates = ids.filter((id, i) => ids.indexOf(id) !== i);
