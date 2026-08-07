@@ -11,6 +11,8 @@
   <script src="./app.js" defer></script>
 </head>
 <body>
+  <a class="skip-link" href="#mainContent">Skip to main content</a>
+
   <header class="topbar">
     <div>
       <h1>Curtis Image Studio</h1>
@@ -20,12 +22,12 @@
   </header>
 
   <nav class="tabbar" role="tablist" aria-label="Sections">
-    <button class="tab active" role="tab" aria-selected="true" data-tab="setup" id="tab-setup">Setup</button>
+    <button class="tab active" role="tab" aria-selected="true" data-state="active" data-tab="setup" id="tab-setup">Setup</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="scenes" id="tab-scenes">Scenes</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="album" id="tab-album">Album <span id="albumCount" class="tab-count" hidden></span></button>
   </nav>
 
-  <main class="layout">
+  <main class="layout" id="mainContent">
     <section class="panel setup-panel" data-tab-content="setup" aria-labelledby="setupTitle">
       <div class="panel-heading">
         <div>
