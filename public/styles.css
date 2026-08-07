@@ -54,7 +54,7 @@
     --bad-rule: #70363b;
     --bad-surface: #2b171c;
 
-    /* Spacing — 4px base, 0/2/4/6/8/10/12/16/24/32/48 */
+    /* Spacing — 4px base, 0/2/4/6/8/10/12/14/16/24/48 */
     --space-0: 0;
     --space-2: .2rem;
     --space-4: .4rem;
@@ -65,9 +65,7 @@
     --space-14: 1.1rem;
     --space-16: 1.25rem;
     --space-24: 1.5rem;
-    --space-32: 2rem;
     --space-48: 3rem;
-    --space-72: 4.5rem;
 
     /* Radius — one language: small controls, medium cards, large surfaces */
     --radius-xs: .3rem;
@@ -82,15 +80,10 @@
     /* Elevation — restrained, one rule */
     --shadow-1: 0 1px 2px rgba(0, 0, 0, .25);
     --shadow-2: 0 1rem 3rem rgba(0, 0, 0, .24);
-    --shadow-focus: 0 0 0 3px rgba(225, 173, 80, .25);
     --shadow-focus-input: 0 0 0 3px rgba(105, 119, 149, .22);
 
     /* Layout */
-    --content-max: min(100%, 84rem);
     --prose-max: 65ch;
-    --header-height: 3.6rem;     /* sticky topbar */
-    --tabbar-height: 3rem;       /* sticky tabbar */
-    --sticky-offset: calc(var(--header-height) + var(--tabbar-height));
 
     /* Motion — one language */
     --ease: cubic-bezier(.4, 0, .2, 1);
@@ -224,7 +217,9 @@
     /* 008. the existing frosted topbar — kept subtle */
     backdrop-filter: blur(16px) saturate(140%);
     -webkit-backdrop-filter: blur(16px) saturate(140%);
-    block-size: var(--header-height);
+    /* No forced block-size: the topbar is content-sized. The h1 +
+       subtitle + pill on mobile can wrap to two lines without
+       colliding with the sticky tabbar below. */
   }
   .topbar h1 {
     /* 021. fluid type */
@@ -236,6 +231,8 @@
     margin: 0;
     color: var(--muted);
     font-size: .85rem;
+    /* 035. readable measure */
+    max-inline-size: var(--prose-max);
   }
 
   /* 037. tabular numbers for the connection pill / status badges */
@@ -258,7 +255,7 @@
   .pill.bad     { color: var(--bad); }
   .pill.checking{ color: var(--warn); }
 
-  /* ---- tabbar (sticky) ---- */
+  /* ---- tabbar (sticky on desktop, scrolls with content on mobile) ---- */
   .tabbar {
     display: flex;
     gap: 0;
@@ -268,9 +265,15 @@
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
     position: sticky;
-    top: var(--header-height);
+    top: 0;
     z-index: 9;
     block-size: var(--tabbar-height);
+  }
+  /* On mobile the topbar wraps to 2-3 lines. Rather than measure
+     its actual height (which CSS can't), let the tabbar scroll
+     with the content. The topbar alone stays sticky. */
+  @media (width < 60rem) {
+    .tabbar { position: static; block-size: auto; }
   }
   .tab {
     background: none;
@@ -768,7 +771,10 @@
   /* 029. modern ranges (still readable) */
   @media (width < 60rem) {
     .layout { grid-template-columns: 1fr; }
-    .topbar { align-items: flex-start; }
+    .topbar {
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }
   }
   @media (width < 36.25rem) {
     .form-row, .form-grid { grid-template-columns: 1fr; }
