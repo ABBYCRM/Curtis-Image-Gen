@@ -68,7 +68,7 @@ const requiredIds = [
   'albumGrid', 'albumSummary', 'refreshAlbumButton', 'clearAlbumButton',
   // Settings dialog
   'settingsButton', 'settingsDialog', 'openaiKeyInput', 'a2eKeyInput',
-  'appTokenInput', 'saveSettingsButton', 'wipeButton',
+  'saveSettingsButton', 'wipeButton',
 ];
 const missingIds = requiredIds.filter((id) => !ids.includes(id));
 if (missingIds.length) throw new Error(`Missing required element IDs: ${missingIds.join(', ')}`);

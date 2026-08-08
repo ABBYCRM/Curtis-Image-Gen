@@ -65,7 +65,7 @@ const elements = Object.fromEntries([
   'parseButton', 'addSceneButton', 'providerSelect', 'aspectSelect', 'qualitySelect',
   'styleInput', 'generateButton', 'createAllVideosButton', 'stopButton',
   'runProgress', 'progressText', 'sceneList', 'log', 'settingsButton',
-  'settingsDialog', 'openaiKeyInput', 'a2eKeyInput', 'appTokenInput',
+  'settingsDialog', 'openaiKeyInput', 'a2eKeyInput',
   'saveSettingsButton', 'wipeButton', 'downloadAllImagesButton',
   'downloadAllVideosButton', 'exportButton', 'importFile',
   'tab-setup', 'tab-scenes', 'tab-album', 'albumCount',
@@ -95,7 +95,6 @@ function saveCredentials() {
   const credentials = {
     openaiKey: elements.openaiKeyInput.value.trim(),
     a2eKey: elements.a2eKeyInput.value.trim(),
-    appToken: elements.appTokenInput.value.trim(),
   };
   localStorage.setItem(SESSION_KEY, JSON.stringify(credentials));
   updateGenerateLabel();
@@ -108,13 +107,12 @@ function providerHeaders(provider) {
   const headers = { 'Content-Type': 'application/json' };
   if (provider === 'openai' && credentials.openaiKey) headers['x-openai-key'] = credentials.openaiKey;
   if (provider === 'a2e' && credentials.a2eKey) headers['x-a2e-key'] = credentials.a2eKey;
-  if (credentials.appToken) headers['x-app-token'] = credentials.appToken;
   return headers;
 }
 
 function hasProviderKey(provider) {
   const credentials = readCredentials();
-  return provider === 'openai' ? Boolean(credentials.openaiKey || credentials.appToken) : Boolean(credentials.a2eKey || credentials.appToken);
+  return provider === 'openai' ? Boolean(credentials.openaiKey) : Boolean(credentials.a2eKey);
 }
 
 function setBanner(kind, message, actionLabel = null, onAction = null) {
@@ -1148,12 +1146,9 @@ function switchTab(name) {
 async function albumFetch(path, options = {}) {
   // Album reads are public (the bytes are stored on the proxy). Writes
   // (POST upload) need no auth — they're over the proxy, and the proxy
-  // trusts the front-end origin via CORS. If the operator later sets
-  // APP_PROXY_TOKEN we forward x-app-token so the proxy can use the
-  // env-stored keys for any provider-specific operation.
-  const credentials = readCredentials();
+  // trusts the front-end origin via CORS. The proxy's APP_PROXY_TOKEN
+  // env var is server-only; the front-end never sends x-app-token.
   const headers = { ...(options.headers || {}) };
-  if (credentials.appToken) headers['x-app-token'] = credentials.appToken;
   const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
   if (!response.ok) {
     let body = {};
@@ -1287,14 +1282,10 @@ async function saveToAlbum({ kind, blob, prompt, title, provider, scene_n }) {
     if (title) params.set('title', title);
     if (provider) params.set('provider', provider);
     if (typeof scene_n === 'number') params.set('scene_n', String(scene_n));
-    // Forward x-app-token so the album upload still works when the
-    // operator has set APP_PROXY_TOKEN on the proxy. Without this,
-    // a configured proxy token silently rejects every album write
-    // with HTTP 401, and the user sees "Album save failed" in the
-    // log with no obvious cause.
+    // The proxy's APP_PROXY_TOKEN is server-side; the front-end
+    // never sends x-app-token. The proxy rejects no token for
+    // writes that don't need auth.
     const headers = { 'Content-Type': mime };
-    const credentials = readCredentials();
-    if (credentials.appToken) headers['x-app-token'] = credentials.appToken;
     const response = await fetch(`${API_BASE}/album/upload?${params}`, {
       method: 'POST',
       headers,
@@ -1411,9 +1402,7 @@ async function setReferenceUrl() {
   // an HTTPS URL as input_reference to GPT Image 2 / A2E without
   // conversion).
   try {
-    const credentials = readCredentials();
     const headers = { 'Content-Type': 'application/json' };
-    if (credentials.appToken) headers['x-app-token'] = credentials.appToken;
     const response = await fetch(`${API_BASE}/album/save-from-url`, {
       method: 'POST',
       headers,
@@ -1653,7 +1642,6 @@ function init() {
   const credentials = readCredentials();
   elements.openaiKeyInput.value = credentials.openaiKey || '';
   elements.a2eKeyInput.value = credentials.a2eKey || '';
-  elements.appTokenInput.value = credentials.appToken || '';
   wireEvents();
   // One-time migration: if a v1 project blob had a reference field
   // inlined as a data URL, copy it to IndexedDB and clear the legacy
