@@ -465,9 +465,27 @@ async function apiRequest(path, provider, options = {}) {
       let body;
       try { body = JSON.parse(text); } catch { body = { friendly: text.slice(0, 500) }; }
       if (!response.ok) {
-        const error = new Error(body.friendly || body?.error?.message || `HTTP ${response.status}`);
+        // Make the cause obvious: a 401 with `invalid_api_key` is
+        // ALWAYS a key problem (typo, rotated, missing project
+        // access). A 429 is ALWAYS a rate-limit problem. A 5xx
+        // is the upstream being unhappy. The user should not have
+        // to read the proxy's response body to know which.
+        const upstreamMessage = body.friendly || body?.error?.message || `HTTP ${response.status}`;
+        const upstreamCode = body?.error?.code || '';
+        let humanMessage = upstreamMessage;
+        if (response.status === 401 && upstreamCode === 'invalid_api_key') {
+          humanMessage = `OpenAI rejected your API key (HTTP 401). The key is wrong, rotated, or lacks project access. Open Settings, paste a fresh key from https://platform.openai.com/account/api-keys, and Save.`;
+        } else if (response.status === 403) {
+          humanMessage = `Provider returned HTTP 403 (forbidden). The key may lack access to this endpoint (e.g. Sora 2 is gated). Open Settings to check your key, or try the A2E provider.`;
+        } else if (response.status === 429) {
+          humanMessage = `Provider rate-limited the request (HTTP 429). Wait a minute and try again, or use a smaller batch.`;
+        } else if (response.status >= 500) {
+          humanMessage = `The provider is having trouble (HTTP ${response.status}). ${upstreamMessage}`;
+        }
+        const error = new Error(humanMessage);
         error.retryable = Boolean(body.retryable) || response.status >= 500;
         error.status = response.status;
+        error.upstreamCode = upstreamCode;
         throw error;
       }
       return body;
@@ -1380,6 +1398,15 @@ async function probeProxy() {
     try {
       response = await fetch(`${API_BASE}/healthz`, { cache: 'no-store', signal: controller.signal });
     } finally { clearTimeout(timer); }
+    // 429 means the proxy is up but is rate-limiting us. The pill
+    // shouldn't claim the proxy is "unavailable" — that misleads the
+    // user into debugging a non-problem. Show a distinct busy state.
+    if (response.status === 429) {
+      elements.connectionPill.className = 'pill bad';
+      elements.connectionPill.textContent = 'Proxy busy';
+      elements.connectionPill.title = 'Rate limit hit on the healthz probe. Wait a minute and the next request will succeed.';
+      return;
+    }
     const body = await response.json();
     if (!response.ok || !body.ok) throw new Error(`HTTP ${response.status}`);
     const elapsed = Date.now() - started;
@@ -1390,8 +1417,8 @@ async function probeProxy() {
     elements.connectionPill.textContent = `Proxy online · v${body.version || '?'}`;
   } catch (error) {
     elements.connectionPill.className = 'pill bad';
-    elements.connectionPill.textContent = 'Proxy unavailable';
-    elements.connectionPill.title = error.message;
+    elements.connectionPill.textContent = 'Proxy unreachable';
+    elements.connectionPill.title = `${error.message}. The proxy may be down or your network may be blocking the request.`;
   }
 }
 
