@@ -4,7 +4,7 @@
   "private": true,
   "description": "Face-locked image/video trailer generator — static site (public/) + smoke tests. Companion proxy lives in curtis-a2e-proxy.",
   "scripts": {
-    "build": "sed -i.bak 's|https://curtis-a2e-proxy.onrender.com|https://curtis-a2e-proxy.ondigitalocean.app|g' public/app.js && rm -f public/app.js.bak && ls public/",
+    "build": "sed -i.bak 's|https://curtis-a2e-proxy.onrender.com|https://curtis-a2e-proxy.ondigitalocean.app|g' public/index.html public/app.js && rm -f public/*.bak && ls public/",
     "test": "node static-contract.js"
   },
   "engines": {

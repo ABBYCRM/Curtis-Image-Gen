@@ -14,7 +14,7 @@
 
 const { chromium, devices } = require('playwright');
 const CHROME = '/root/.cache/ms-playwright/chromium-1223/chrome-linux/chrome';
-const URL = 'https://curtis-image-gen.onrender.com/?t=' + Date.now();
+const URL = 'https://curtis-image-gen-xnubd.ondigitalocean.app/?t=' + Date.now();
 const OPENAI_KEY = process.env.OPENAI_KEY || '';
 
 (async () => {
