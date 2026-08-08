@@ -393,6 +393,19 @@
   .banner.ok   { color: var(--ok-on); border-color: var(--ok-border); background: var(--ok-bg); }
   .banner.warn { color: var(--warn-on); border-color: var(--warn-border); background: var(--warn-bg); }
   .banner.bad  { color: var(--bad-on); border-color: var(--bad-border); background: var(--bad-bg); }
+  /* When the banner includes an action button (e.g. "Switch to A2E"),
+     lay out the message + button on a single line and let the
+     button hug its content. The button is rendered as a small
+     ghost inside the banner. */
+  .banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-12);
+    flex-wrap: wrap;
+  }
+  .banner > span { flex: 1 1 auto; min-inline-size: 0; }
+  .banner-action { flex: 0 0 auto; }
 
   .notice {
     padding: var(--space-8);
@@ -668,6 +681,8 @@
   }
   .status.running { color: var(--warn); }
   .status.done    { color: var(--ok); }
+  .status.skipped { color: var(--warn); cursor: help; }
+  .status.skipped.has-error { text-decoration: underline dotted var(--warn); }
   .status.failed  { color: var(--bad); cursor: help; }
   .status.failed.has-error { text-decoration: underline dotted var(--bad); }
   .scene-error {

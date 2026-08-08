@@ -117,9 +117,21 @@ function hasProviderKey(provider) {
   return provider === 'openai' ? Boolean(credentials.openaiKey || credentials.appToken) : Boolean(credentials.a2eKey || credentials.appToken);
 }
 
-function setBanner(kind, message) {
+function setBanner(kind, message, actionLabel = null, onAction = null) {
   elements.banner.className = `banner ${kind}`;
-  elements.banner.textContent = message;
+  // Wipe any prior action button so banners don't accumulate.
+  elements.banner.replaceChildren();
+  const text = document.createElement('span');
+  text.textContent = message;
+  elements.banner.append(text);
+  if (actionLabel && typeof onAction === 'function') {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'button ghost small banner-action';
+    button.textContent = actionLabel;
+    button.addEventListener('click', onAction);
+    elements.banner.append(button);
+  }
 }
 
 function log(message, kind = '') {
@@ -280,26 +292,28 @@ function makeSceneCard(scene) {
     ? 'running'
     : scene.videoStatus === 'failed' || scene.imageStatus === 'failed'
       ? 'failed'
-      : scene.videoStatus === 'done' || scene.imageStatus === 'done'
-        ? 'done'
-        : 'idle';
+      : scene.videoStatus === 'skipped' && scene.imageStatus === 'done'
+        ? 'skipped'
+        : scene.videoStatus === 'done' || scene.imageStatus === 'done'
+          ? 'done'
+          : 'idle';
   status.className = `status ${combined}`;
   status.textContent = combined;
   // Surface the last error on the badge so the user can see it
   // without scrolling to the run log. The combined status already
   // reflects image + video; pick the most recent error to display.
   const lastError = scene.videoError || scene.imageError;
-  if (lastError && combined === 'failed') {
+  if (lastError && (combined === 'failed' || combined === 'skipped')) {
     status.title = lastError;
     status.classList.add('has-error');
   }
   titleRow.append(title, status);
 
   // Inline error message — visible on the card itself when the
-  // image or video failed. Without this, a 'failed' status badge
-  // told the user nothing about WHY, and they had to scroll to the
-  // run log at the bottom of the Scenes panel.
-  if (lastError && combined === 'failed') {
+  // image or video failed OR when the video was skipped. The
+  // .scene-error class is reused for both; the message + status
+  // tell the user which.
+  if (lastError && (combined === 'failed' || combined === 'skipped')) {
     const errorBanner = document.createElement('p');
     errorBanner.className = 'scene-error';
     errorBanner.textContent = lastError;
@@ -330,11 +344,15 @@ function makeSceneCard(scene) {
   // (The runSingleVideo guard refused anyway, but the user had to
   // click to find out.)
   if (scene.imageUrl) {
-    const videoButton = actionButton(
-      scene.videoUrl ? 'Recreate clip' : 'Create video',
-      async () => runSingleVideo(scene)
-    );
-    videoButton.title = 'Uses OpenAI Sora 2 first; falls back to A2E automatically.';
+    const videoLabel = scene.videoUrl
+      ? 'Recreate clip'
+      : scene.videoStatus === 'skipped'
+        ? 'Try clip again'
+        : 'Create video';
+    const videoButton = actionButton(videoLabel, async () => runSingleVideo(scene));
+    videoButton.title = scene.videoStatus === 'skipped'
+      ? 'Sora 2 was skipped earlier (likely gated). This will retry the video for this scene.'
+      : 'Uses OpenAI Sora 2 first; falls back to A2E automatically.';
     actions.append(videoButton);
   }
   if (scene.imageUrl) actions.append(actionButton('Download image', () => downloadAsset(scene.imageUrl, `scene-${scene.n}.png`, 'image/png'), 'ghost'));
@@ -472,20 +490,41 @@ async function apiRequest(path, provider, options = {}) {
         // to read the proxy's response body to know which.
         const upstreamMessage = body.friendly || body?.error?.message || `HTTP ${response.status}`;
         const upstreamCode = body?.error?.code || '';
+        const actionable = body.actionable || null;
+        const codeFromProxy = body?.error?.code || '';
         let humanMessage = upstreamMessage;
+        let kind = 'provider_error';
         if (response.status === 401 && upstreamCode === 'invalid_api_key') {
           humanMessage = `OpenAI rejected your API key (HTTP 401). The key is wrong, rotated, or lacks project access. Open Settings, paste a fresh key from https://platform.openai.com/account/api-keys, and Save.`;
+          kind = 'invalid_key';
+        } else if (codeFromProxy === 'openai_org_not_verified') {
+          humanMessage = `Sora 2 is gated: your OpenAI organization is not verified. Go to https://platform.openai.com/settings/organization/general and click Verify Organization (phone + ID required). Allow up to 15 minutes for access to propagate. Until then, the video phase is skipped and the image phase continues.`;
+          kind = 'sora_org_not_verified';
+        } else if (codeFromProxy === 'openai_model_not_enabled') {
+          humanMessage = `Your OpenAI project does not have access to this model. Enable it at https://platform.openai.com/settings/project (Limits → Model Usage), or switch the Provider dropdown to A2E and re-run.`;
+          kind = 'sora_model_not_enabled';
+        } else if (codeFromProxy === 'openai_billing_issue') {
+          humanMessage = `OpenAI suspended access for billing. Settle the outstanding invoice at https://platform.openai.com/account/billing, or switch to A2E.`;
+          kind = 'billing_issue';
+        } else if (response.status === 401 && codeFromProxy === 'missing_provider_key') {
+          humanMessage = `A ${provider === 'openai' ? 'OpenAI' : 'A2E'} API key is required. Open Settings, paste a key, and Save.`;
+          kind = 'missing_key';
         } else if (response.status === 403) {
           humanMessage = `Provider returned HTTP 403 (forbidden). The key may lack access to this endpoint (e.g. Sora 2 is gated). Open Settings to check your key, or try the A2E provider.`;
+          kind = 'forbidden';
         } else if (response.status === 429) {
           humanMessage = `Provider rate-limited the request (HTTP 429). Wait a minute and try again, or use a smaller batch.`;
+          kind = 'rate_limited';
         } else if (response.status >= 500) {
           humanMessage = `The provider is having trouble (HTTP ${response.status}). ${upstreamMessage}`;
+          kind = 'upstream_5xx';
         }
         const error = new Error(humanMessage);
         error.retryable = Boolean(body.retryable) || response.status >= 500;
         error.status = response.status;
         error.upstreamCode = upstreamCode;
+        error.actionable = actionable;
+        error.kind = kind;
         throw error;
       }
       return body;
@@ -914,10 +953,33 @@ async function runPipeline(scenes = state.scenes, includeVideos = true) {
               log(`Scene ${scene.n}: submitting Sora 2 clip.`);
               url = await generateOpenAIVideo(scene);
             } catch (openaiErr) {
+              // Three distinct fall-through paths after a Sora 2
+              // failure:
+              //  1. A2E key set → try A2E
+              //  2. Sora 2 is gated (org not verified / model not
+              //     enabled / billing) and no A2E key → mark the
+              //     VIDEO as "skipped" (not "failed") and continue
+              //     with the image phase. The banner turns warn,
+              //     not bad.
+              //  3. Any other Sora 2 error → surface it as "failed".
               if (hasProviderKey('a2e')) {
                 log(`Scene ${scene.n}: Sora 2 failed (${openaiErr.message}); falling back to A2E.`, 'warn');
                 url = await generateA2EVideo(scene);
                 vidProvider = 'a2e';
+              } else if (openaiErr.kind === 'sora_org_not_verified'
+                  || openaiErr.kind === 'sora_model_not_enabled'
+                  || openaiErr.kind === 'billing_issue') {
+                // Soft-skip: the image succeeded, the video is
+                // gated. Don't fail the run; the user can fix
+                // access at platform.openai.com and re-run clips.
+                log(`Scene ${scene.n}: Sora 2 is gated for this project. Skipping clip.`, 'warn');
+                scene.videoStatus = 'skipped';
+                scene.videoError = openaiErr.message;
+                scene.videoSkipKind = openaiErr.kind;
+                // Throw a sentinel to jump out of the inner try
+                // without re-running the "scene.videoStatus = 'done'"
+                // block below.
+                throw { __skip: true, message: openaiErr.message, kind: openaiErr.kind };
               } else {
                 throw openaiErr;
               }
@@ -949,13 +1011,23 @@ async function runPipeline(scenes = state.scenes, includeVideos = true) {
             }
           } catch (e) { log(`Album clip save failed: ${e.message}`, 'warn'); }
         } catch (vidErr) {
-          scene.videoStatus = 'failed';
-          scene.videoError = vidErr.message || String(vidErr);
-          scene.videoUrl = null;
-          log(`Scene ${scene.n} video failed: ${scene.videoError}`, 'error');
-          // Don't re-throw — a single failed video shouldn't stop
-          // the rest of the pipeline. The user can re-run a single
-          // scene's video from the scene card.
+          // The Sora-2-gated path throws a sentinel object with
+          // __skip: true; honor it without re-stamping the status.
+          if (vidErr && vidErr.__skip) {
+            log(`Scene ${scene.n}: ${vidErr.message}`, 'warn');
+            if (!state.videoSkips) state.videoSkips = [];
+            state.videoSkips.push({ n: scene.n, kind: vidErr.kind, message: vidErr.message });
+          } else {
+            scene.videoStatus = 'failed';
+            scene.videoError = (vidErr && vidErr.message) || String(vidErr);
+            scene.videoUrl = null;
+            log(`Scene ${scene.n} video failed: ${scene.videoError}`, 'error');
+            if (!state.videoFailures) state.videoFailures = [];
+            state.videoFailures.push({ n: scene.n, message: scene.videoError });
+          }
+          // Don't re-throw — a single failed / skipped video
+          // shouldn't stop the rest of the pipeline. The user can
+          // re-run a single scene's video from the scene card.
         }
         completed += 1;
         setProgress(completed, operations, `Scene ${scene.n} ${scene.videoStatus === 'done' ? 'clip complete' : 'video skipped'}.`);
@@ -966,23 +1038,65 @@ async function runPipeline(scenes = state.scenes, includeVideos = true) {
         renderScenes();
       }
     }
-    setBanner('ok', includeVideos
-      ? 'All scene images and clips are ready. Open the Album tab to download.'
-      : 'All scene images are ready.');
+    // Banner tone depends on what happened:
+    //  - all videos done, all images done → "ok" (green)
+    //  - some videos skipped because Sora 2 is gated → "warn"
+    //    (yellow) with the actionable next step
+    //  - some videos failed for other reasons → "warn" with
+    //    the count + first reason
+    //  - images failed → "bad" (red) — surfaced by the outer catch
+    const skipCount = (state.videoSkips || []).length;
+    const failCount = (state.videoFailures || []).length;
+    const videoOk = (state.scenes || []).filter((s) => s.videoStatus === 'done').length;
+    state.videoSkips = [];
+    state.videoFailures = [];
+    if (skipCount > 0 && includeVideos) {
+      const firstSkip = state.videoSkips && state.videoSkips[0];
+      const msg = `All scene images are ready. ${skipCount} clip${skipCount === 1 ? '' : 's'} skipped — ${firstSkip?.message || 'Sora 2 is gated for this project.'} Add an A2E key in Settings to render clips via A2E.`;
+      setBanner('warn', msg);
+    } else if (failCount > 0 && videoOk > 0 && includeVideos) {
+      setBanner('warn', `All scene images are ready. ${videoOk} clip${videoOk === 1 ? '' : 's'} complete; ${failCount} failed (see scene cards for details).`);
+    } else {
+      setBanner('ok', includeVideos
+        ? 'All scene images and clips are ready. Open the Album tab to download.'
+        : 'All scene images are ready.');
+    }
     setProgress(operations, operations, 'Complete');
   } catch (error) {
     const stopped = error.name === 'AbortError';
+    let anyImageFailed = false;
     for (const scene of scenes) {
       if (scene.imageStatus === 'running') {
         scene.imageStatus = stopped ? 'idle' : 'failed';
-        if (!stopped) scene.imageError = error.message || String(error);
+        if (!stopped) {
+          scene.imageError = error.message || String(error);
+          anyImageFailed = true;
+        }
       }
       if (scene.videoStatus === 'running') {
         scene.videoStatus = stopped ? 'idle' : 'failed';
         if (!stopped) scene.videoError = error.message || String(error);
       }
     }
-    setBanner(stopped ? 'warn' : 'bad', stopped ? 'Generation stopped.' : error.message);
+    if (stopped) {
+      setBanner('warn', 'Generation stopped.');
+    } else if (anyImageFailed && !hasProviderKey('a2e') && elements.providerSelect.value === 'openai') {
+      // Image failed on OpenAI and the user has no A2E key. Offer a
+      // one-click switch to the A2E provider. The user can still
+      // type a new A2E key first; the button is just a shortcut.
+      setBanner(
+        'bad',
+        error.message,
+        'Switch to A2E',
+        () => {
+          elements.providerSelect.value = 'a2e';
+          elements.providerSelect.dispatchEvent(new Event('change', { bubbles: true }));
+          setBanner('info', 'Switched to A2E. Add an A2E key in Settings, then re-run Generate.');
+        }
+      );
+    } else {
+      setBanner('bad', error.message);
+    }
     log(stopped ? 'Generation stopped by user.' : error.message, stopped ? '' : 'error');
     setProgress(completed, operations, stopped ? 'Stopped' : 'Failed');
   } finally {
