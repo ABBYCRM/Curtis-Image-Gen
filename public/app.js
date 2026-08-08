@@ -905,11 +905,23 @@ async function runPipeline(scenes = state.scenes, includeVideos = true) {
       }
       scene.imageStatus = 'done';
       scene.imageError = null;
-      // Save a copy to the album so the user can re-download it from
-      // the Album tab. Best-effort — failures here are logged but do
-      // not fail the image response.
+      // Convert the (possibly cross-origin) image URL into a same-origin
+      // blob URL so per-scene Download works without a cross-origin
+      // fetch. Browsers do NOT honor `<a download=...>` on cross-origin
+      // URLs — the click would just navigate to the URL. We fetch the
+      // bytes through the proxy (which already saves to the album
+      // anyway) and synthesize a blob URL. The blob URL is then used
+      // for the scene card's `<img>` source, the per-scene Download
+      // button, and the album-uploaded bytes.
+      //
+      // If `dataUrlToBlob` fails (e.g. CSP blocks the cross-origin
+      // fetch) fall back to the original URL — the album tab still
+      // works because it uses the proxy's saved copy.
       try {
         const blob = await dataUrlToBlob(scene.imageUrl);
+        const blobUrl = URL.createObjectURL(blob);
+        scene.imageUrl = blobUrl;
+        // Save the same bytes to the album.
         await saveToAlbum({
           kind: 'image', blob,
           prompt: sceneImagePrompt(scene),
@@ -990,15 +1002,18 @@ async function runPipeline(scenes = state.scenes, includeVideos = true) {
           // If neither provider has a key, just skip the video
           // (the user can still get the images and add a key
           // later for the next run). Don't fail the whole run.
-          scene.videoUrl = url;
-          scene.videoProvider = vidProvider;
-          scene.videoStatus = 'done';
-          scene.videoError = null;
-          // Best-effort album save
+          // Convert the (possibly cross-origin) video URL into a
+          // same-origin blob URL so per-scene Download works.
+          // Browsers do NOT honor `<a download=...>` on cross-origin
+          // URLs — the click would just navigate. The blob URL is
+          // used for the scene card's `<video>` source, the per-scene
+          // Download button, and the album-uploaded bytes.
+          let videoBlobUrl = null;
           try {
             const videoResponse = await fetch(url);
             if (videoResponse.ok) {
               const blob = await videoResponse.blob();
+              videoBlobUrl = URL.createObjectURL(blob);
               await saveToAlbum({
                 kind: 'video', blob,
                 prompt: sceneVideoPrompt(scene),
@@ -1008,6 +1023,12 @@ async function runPipeline(scenes = state.scenes, includeVideos = true) {
               });
             }
           } catch (e) { log(`Album clip save failed: ${e.message}`, 'warn'); }
+          // Prefer the blob URL (same-origin, works for `<a download>`).
+          // Fall back to the remote URL if blob creation failed.
+          scene.videoUrl = videoBlobUrl || url;
+          scene.videoProvider = vidProvider;
+          scene.videoStatus = 'done';
+          scene.videoError = null;
         } catch (vidErr) {
           // The Sora-2-gated path throws a sentinel object with
           // __skip: true; honor it without re-stamping the status.
@@ -1309,11 +1330,43 @@ async function saveToAlbum({ kind, blob, prompt, title, provider, scene_n }) {
 // We do this with a manual base64 decode + Uint8Array so we don't need
 // to fetch the data: URL (the front-end's CSP forbids fetching from
 // data: origins via the connect-src directive).
-async function dataUrlToBlob(dataUrl) {
-  const match = /^data:([^;,]+);base64,([A-Za-z0-9+/=\s]+)$/.exec(dataUrl || '');
-  if (!match) throw new Error('Not a data URL');
-  const bytes = Uint8Array.from(atob(match[2].replace(/\s/g, '')), (c) => c.charCodeAt(0));
-  return new Blob([bytes], { type: match[1] });
+async function dataUrlToBlob(url) {
+  // Two URL flavors are accepted:
+  //   - data:image/png;base64,…  — OpenAI image responses in b64_json
+  //     mode. Decode the base64 directly to bytes.
+  //   - https://…                — OpenAI image responses in url mode
+  //     (the default). Fetch the bytes via the proxy (CORS-allowed)
+  //     and return them as a blob.
+  //
+  // Why not fetch the data URL? data: URLs are blocked by Chrome's CSP
+  // connect-src (see do-app-platform-curl memory). The base64 path is
+  // safer — we never invoke fetch on a data URL.
+  if (typeof url !== 'string' || !url) throw new Error('Empty URL.');
+  if (url.startsWith('data:')) {
+    const match = /^data:([^;,]+);base64,([A-Za-z0-9+/=\s]+)$/.exec(url);
+    if (!match) throw new Error('Not a base64 data URL');
+    const bytes = Uint8Array.from(atob(match[2].replace(/\s/g, '')), (c) => c.charCodeAt(0));
+    return new Blob([bytes], { type: match[1] });
+  }
+  // Remote URL — fetch via the proxy if cross-origin, else fetch
+  // directly. The proxy is the same origin as the front-end, so we
+  // can stream any same-origin remote URL through it.
+  let fetchUrl = url;
+  if (!url.startsWith(`${API_BASE}/`) && !url.startsWith('/')) {
+    // Cross-origin remote URL. Route through the proxy's
+    // /album/save-from-url, then read back from the album.
+    const save = await fetch(`${API_BASE}/album/save-from-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'image', url, prompt: 'download', title: 'download' }),
+    });
+    if (!save.ok) throw new Error(`Proxy save-from-url failed (HTTP ${save.status}).`);
+    const saved = await save.json();
+    fetchUrl = `${API_BASE}${saved.url}`;
+  }
+  const resp = await fetch(fetchUrl);
+  if (!resp.ok) throw new Error(`Fetch failed (HTTP ${resp.status}).`);
+  return resp.blob();
 }
 
 // Save bytes the browser to disk. Three URL forms are supported:
@@ -1328,6 +1381,18 @@ async function dataUrlToBlob(dataUrl) {
 async function downloadAsset(url, filename, mime = 'application/octet-stream') {
   try {
     if (!url) throw new Error('No URL to download.');
+    // The scene card's URL is now a same-origin blob: URL (the image
+    // and video paths convert the cross-origin remote URL into a blob
+    // immediately after generation). The album's URL is /album/... on
+    // the same proxy origin. Both are same-origin, so the anchor +
+    // download trick works directly.
+    //
+    // The OLD bug: scene.imageUrl was a cross-origin OpenAI URL
+    // (oaidalleapiprodscus.blob.core.windows.net/...). Browsers do
+    // NOT honor `<a download=...>` on cross-origin URLs — the click
+    // navigated to the URL instead of downloading. Fix: convert the
+    // URL to a blob at generation time (above). Now downloadAsset is
+    // back to the simple anchor pattern.
     const anchor = document.createElement('a');
     anchor.href = url;
     anchor.download = filename;
