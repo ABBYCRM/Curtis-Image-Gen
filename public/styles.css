@@ -59,7 +59,6 @@
     /* UI surfaces (one-off names that recur in specific components) */
     --banner-info: #c7cfdf;
     --notice-text: #f1d49e;
-    --code-bg: #0b0f17;
     --scene-media-bg: #05070b;
     --album-bg: #0a0d13;
     --reference-img-bg: #05070a;
@@ -90,7 +89,6 @@
     --space-48: 3rem;
 
     /* Radius — one language: small controls, medium cards, large surfaces */
-    --radius-xs: .3rem;
     --radius-sm: .4rem;
     --radius-md: .7rem;
     --radius-lg: .85rem;
@@ -365,10 +363,16 @@
     min-inline-size: 0;
     flex: 1 1 auto;
   }
-  /* Keep the action button cluster together on the right. */
+  /* Keep the action button cluster together on the right. The
+   * row must allow its children to wrap when the viewport is
+   * narrow, so `flex: 0 1 auto` (allow shrink) + `min-inline-size: 0`
+   * let the row's own flex-wrap kick in. With the old `flex: 0 0
+   * auto` the row kept its natural width and overflowed on mobile. */
   .panel-heading > .button-row {
-    flex: 0 0 auto;
+    flex: 0 1 auto;
+    min-inline-size: 0;
     margin-block-start: 0;
+    max-inline-size: 100%;
   }
   .panel-heading h2 { margin: 0; font-size: 1.05rem; }
   .eyebrow {
@@ -438,11 +442,18 @@
   }
 
   .muted { color: var(--muted); font-size: .84rem; }
+  /* Inline code — token-style chrome, not form-field chrome. */
+  /* Without this override the `code` element inherited the same */
+  /* border + dark surface as the form controls, which made it look */
+  /* like a small input on the Setup tab. */
   code {
-    padding: var(--space-2) var(--space-4);
-    border: 1px solid var(--line);
-    border-radius: var(--radius-xs);
-    background: var(--code-bg);
+    padding: 0.05em 0.35em;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--gold);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.92em;
   }
 
   /* ---- forms (one language) ---- */
