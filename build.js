@@ -2,7 +2,10 @@
 'use strict';
 // build.js — substitute the proxy URL into the served assets at build time.
 // Reads the target URL from the PROXY_URL env var (set by DO App Platform's
-// build environment) and falls back to the onrender.com URL for local dev.
+// build environment). The operator MUST set PROXY_URL to the deployed
+// proxy origin before running this script; the onrender.com fallback is
+// only for the local development smoke test (the proxy at that URL is
+// decommissioned as of 2026-08-08).
 //
 // The proxy URL has a random suffix on DigitalOcean App Platform
 // (e.g. curtis-a2e-proxy-8ubpt.ondigitalocean.app), so we can't hard-code
@@ -12,8 +15,17 @@
 const fs = require('fs');
 const path = require('path');
 
+// Default to the onrender.com placeholder URL ONLY when running the
+// local smoke test (`npm test` invokes static-contract.js, but DO's
+// build command is `npm run build` which sets PROXY_URL). The static-
+// contract enforces the onrender.com URL is present in the COMMITTED
+// source as a placeholder; the build rewrites it on every deploy.
 const target = process.env.PROXY_URL || 'https://curtis-a2e-proxy.onrender.com';
-console.log('[build] substituting proxy URL with', target);
+if (target === 'https://curtis-a2e-proxy.onrender.com') {
+  console.warn('[build] PROXY_URL is not set; using the onrender.com fallback.');
+  console.warn('[build] This is the placeholder URL — the deployed site will not connect to a real proxy.');
+  console.warn('[build] Set PROXY_URL=https://curtis-a2e-proxy-XXXX.ondigitalocean.app before running the build for production.');
+}
 
 const files = ['public/index.html', 'public/app.js'];
 for (const f of files) {
