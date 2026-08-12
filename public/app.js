@@ -38,6 +38,12 @@ const LIMITS = {
   OPENAI_VIDEO_POLL_STEP_MS: 200,
   OPENAI_VIDEO_POLL_CAP_MS: 6000,
 
+  // Hedra generation polling (image-to-video)
+  HEDRA_POLL_MAX_ATTEMPTS: 72,    // ~3 minutes at the long end of the backoff
+  HEDRA_POLL_BASE_MS: 2500,
+  HEDRA_POLL_STEP_MS: 150,
+  HEDRA_POLL_CAP_MS: 6000,
+
   // Cold-start UX
   PROXY_HEALTHZ_TIMEOUT_MS: 8000,     // above this we assume Render free-tier cold start
   PROXY_HEALTHZ_SLOW_THRESHOLD_MS: 3000,
@@ -59,13 +65,20 @@ const A2E_RESOLUTIONS = {
   high:   '4K',
 };
 
+// Hedra resolution mapping (540p / 720p / 1080p per the model docs)
+const HEDRA_RESOLUTIONS = {
+  low:    '540p',
+  medium: '720p',
+  high:   '1080p',
+};
+
 const elements = Object.fromEntries([
   'connectionPill', 'banner', 'referenceDrop', 'referenceFile', 'referenceUrl',
   'referencePreview', 'referenceEmpty', 'clearReferenceButton', 'scriptInput',
   'parseButton', 'addSceneButton', 'providerSelect', 'aspectSelect', 'qualitySelect',
   'styleInput', 'generateButton', 'createAllVideosButton', 'stopButton',
   'runProgress', 'progressText', 'sceneList', 'log', 'settingsButton',
-  'settingsDialog', 'openaiKeyInput', 'a2eKeyInput',
+  'settingsDialog', 'openaiKeyInput', 'a2eKeyInput', 'hedraKeyInput',
   'saveSettingsButton', 'wipeButton', 'downloadAllImagesButton',
   'downloadAllVideosButton', 'exportButton', 'importFile',
   'tab-setup', 'tab-scenes', 'tab-album', 'albumCount',
@@ -95,6 +108,7 @@ function saveCredentials() {
   const credentials = {
     openaiKey: elements.openaiKeyInput.value.trim(),
     a2eKey: elements.a2eKeyInput.value.trim(),
+    hedraKey: elements.hedraKeyInput.value.trim(),
   };
   localStorage.setItem(SESSION_KEY, JSON.stringify(credentials));
   updateGenerateLabel();
@@ -102,17 +116,23 @@ function saveCredentials() {
   setBanner('ok', 'Credentials saved in this browser. They survive page reloads. Use Wipe to clear.');
 }
 
+const PROVIDER_KEY_FIELDS = { openai: 'openaiKey', a2e: 'a2eKey', hedra: 'hedraKey' };
+const PROVIDER_HEADER_NAMES = { openai: 'x-openai-key', a2e: 'x-a2e-key', hedra: 'x-hedra-key' };
+const PROVIDER_LABELS = { openai: 'OpenAI', a2e: 'A2E', hedra: 'Hedra' };
+
 function providerHeaders(provider) {
   const credentials = readCredentials();
   const headers = { 'Content-Type': 'application/json' };
-  if (provider === 'openai' && credentials.openaiKey) headers['x-openai-key'] = credentials.openaiKey;
-  if (provider === 'a2e' && credentials.a2eKey) headers['x-a2e-key'] = credentials.a2eKey;
+  const field = PROVIDER_KEY_FIELDS[provider];
+  const headerName = PROVIDER_HEADER_NAMES[provider];
+  if (field && headerName && credentials[field]) headers[headerName] = credentials[field];
   return headers;
 }
 
 function hasProviderKey(provider) {
   const credentials = readCredentials();
-  return provider === 'openai' ? Boolean(credentials.openaiKey) : Boolean(credentials.a2eKey);
+  const field = PROVIDER_KEY_FIELDS[provider];
+  return field ? Boolean(credentials[field]) : false;
 }
 
 function setBanner(kind, message, actionLabel = null, onAction = null) {
@@ -151,12 +171,12 @@ function updateGenerateLabel() {
   // one click. The user used to have to click Generate, wait, then
   // click Create video on every scene — they rightly called that
   // "not happening." One click, all the assets, end of story.
-  const hasVideoKey = hasProviderKey('openai') || hasProviderKey('a2e');
+  const hasVideoKey = availableVideoProviders().length > 0;
   elements.generateButton.textContent = hasVideoKey
     ? 'Generate images + videos'
     : 'Generate images';
   elements.generateButton.title = hasVideoKey
-    ? 'Generates the scene image and the video clip for every scene in one click. OpenAI Sora 2 first for video, A2E fallback.'
+    ? 'Generates the scene image and the video clip for every scene in one click. OpenAI Sora 2 first for video, then Hedra, then A2E.'
     : 'Add a video provider key in Settings to also generate clips.';
   updateCreateAllVideosButton();
 }
@@ -168,17 +188,17 @@ function updateGenerateLabel() {
 // to create.
 function updateCreateAllVideosButton() {
   if (!elements.createAllVideosButton) return;
-  const hasVideoProvider = hasProviderKey('openai') || hasProviderKey('a2e');
+  const hasVideoProvider = availableVideoProviders().length > 0;
   const hasImageReady = state.scenes.some((s) => s.imageUrl);
   const ready = hasVideoProvider && hasImageReady && !state.running;
   elements.createAllVideosButton.disabled = !ready;
   elements.createAllVideosButton.title = !hasVideoProvider
-    ? 'Add an OpenAI or A2E key in Settings to enable video generation.'
+    ? 'Add an OpenAI, Hedra, or A2E key in Settings to enable video generation.'
     : !hasImageReady
       ? 'Generate scene images first — clips need a source frame.'
       : state.running
         ? 'Generation already in progress…'
-        : 'OpenAI Sora 2 first, A2E as fallback.';
+        : 'OpenAI Sora 2 first, then Hedra, then A2E as fallback.';
 }
 
 function projectSnapshot() {
@@ -505,7 +525,7 @@ async function apiRequest(path, provider, options = {}) {
           humanMessage = `OpenAI suspended access for billing. Settle the outstanding invoice at https://platform.openai.com/account/billing, or switch to A2E.`;
           kind = 'billing_issue';
         } else if (response.status === 401 && codeFromProxy === 'missing_provider_key') {
-          humanMessage = `A ${provider === 'openai' ? 'OpenAI' : 'A2E'} API key is required. Open Settings, paste a key, and Save.`;
+          humanMessage = `A ${PROVIDER_LABELS[provider] || provider} API key is required. Open Settings, paste a key, and Save.`;
           kind = 'missing_key';
         } else if (response.status === 403) {
           humanMessage = `Provider returned HTTP 403 (forbidden). The key may lack access to this endpoint (e.g. Sora 2 is gated). Open Settings to check your key, or try the A2E provider.`;
@@ -632,6 +652,38 @@ async function generateA2EVideo(scene) {
   return pollA2E('video', id);
 }
 
+// Hedra image-to-video (fal/grok-video-i2v via Hedra's unified API).
+// The proxy uploads the source frame and submits the generation in one
+// call; we just poll /hedra/video/:id until it reports "complete" and
+// return the resulting (publicly downloadable) video URL.
+async function generateHedraVideo(scene) {
+  const source = scene.imageUrl || state.reference;
+  const body = await apiRequest('/hedra/video', 'hedra', {
+    method: 'POST',
+    body: JSON.stringify({
+      prompt: sceneVideoPrompt(scene),
+      image_url: source,
+      aspectRatio: elements.aspectSelect.value,
+      resolution: HEDRA_RESOLUTIONS[elements.qualitySelect.value] || HEDRA_RESOLUTIONS.medium,
+    }),
+  });
+  if (!body.generation_id) throw new Error('Hedra returned no generation ID.');
+  return pollHedra(body.generation_id);
+}
+
+async function pollHedra(generationId) {
+  for (let attempt = 0; attempt < LIMITS.HEDRA_POLL_MAX_ATTEMPTS; attempt += 1) {
+    const body = await apiRequest(`/hedra/video/${encodeURIComponent(generationId)}`, 'hedra', { method: 'GET' });
+    if (body.status === 'complete') {
+      if (!body.video_url) throw new Error('Hedra reported the clip complete but returned no video URL.');
+      return body.video_url;
+    }
+    if (body.status === 'error') throw new Error(body.error || 'Hedra video generation failed.');
+    await sleep(Math.min(LIMITS.HEDRA_POLL_BASE_MS + attempt * LIMITS.HEDRA_POLL_STEP_MS, LIMITS.HEDRA_POLL_CAP_MS));
+  }
+  throw new Error('Hedra video job timed out.');
+}
+
 // OpenAI Sora 2 video (still live; scheduled for removal 2026-09-24).
 // Returns the proxy URL of the completed video MP4 (the front-end
 // streams the bytes from /openai/videos/:id/content).
@@ -689,18 +741,67 @@ async function fetchOpenAIVideoBytes(jobId) {
   return URL.createObjectURL(blob);
 }
 
-// Create a single scene's video. Tries OpenAI first (sora-2),
-// falls back to A2E on auth/config error.
+// Video provider fallback chain: OpenAI Sora 2 (best quality, gated for
+// many accounts) -> Hedra (fal/grok-video-i2v, image + prompt) -> A2E
+// (long-term free-tier-friendly path). Only providers with a saved key
+// are attempted, in this fixed order.
+const VIDEO_PROVIDER_ORDER = ['openai', 'hedra', 'a2e'];
+const SORA_SOFT_GATE_KINDS = ['sora_org_not_verified', 'sora_model_not_enabled', 'billing_issue'];
+
+function availableVideoProviders() {
+  return VIDEO_PROVIDER_ORDER.filter(hasProviderKey);
+}
+
+function providerLabel(provider) {
+  return provider === 'openai' ? 'Sora 2 (OpenAI)' : PROVIDER_LABELS[provider] || provider;
+}
+
+async function generateVideoForProvider(provider, scene) {
+  if (provider === 'openai') return generateOpenAIVideo(scene);
+  if (provider === 'hedra') return generateHedraVideo(scene);
+  return generateA2EVideo(scene);
+}
+
+// Tries each configured video provider in order, returning the first
+// success as { url, provider }. If every provider fails AND the last
+// one tried was a gated Sora 2 request with nothing else configured,
+// the thrown error carries `__skip = true` so callers can treat it as
+// "video skipped" (actionable, not a bug) rather than "video failed".
+async function generateVideoClip(scene, { onAttempt } = {}) {
+  const providers = availableVideoProviders();
+  if (!providers.length) {
+    throw new Error('No video provider key configured — add OpenAI, Hedra, or A2E in Settings to enable clips.');
+  }
+  let lastError = null;
+  for (let i = 0; i < providers.length; i += 1) {
+    const provider = providers[i];
+    const isLast = i === providers.length - 1;
+    onAttempt?.(provider);
+    try {
+      const url = await generateVideoForProvider(provider, scene);
+      return { url, provider };
+    } catch (error) {
+      lastError = error;
+      if (provider === 'openai' && isLast && SORA_SOFT_GATE_KINDS.includes(error.kind)) {
+        error.__skip = true;
+      }
+      if (isLast) throw error;
+      log(`Scene ${scene.n}: ${providerLabel(provider)} clip failed (${error.message}); trying ${providerLabel(providers[i + 1])}.`, 'warn');
+    }
+  }
+  throw lastError;
+}
+
+// Create a single scene's video. Tries OpenAI Sora 2 first, then
+// Hedra, then A2E — whichever keys are configured.
 async function runSingleVideo(scene) {
   if (state.running) return;
   if (!scene.imageUrl && !state.reference) {
     setBanner('bad', 'Add a reference image or generate the scene image first.');
     return;
   }
-  const useOpenAI = hasProviderKey('openai');
-  const useA2E = hasProviderKey('a2e');
-  if (!useOpenAI && !useA2E) {
-    setBanner('bad', 'Open Settings and add an OpenAI or A2E key.');
+  if (!availableVideoProviders().length) {
+    setBanner('bad', 'Open Settings and add an OpenAI, Hedra, or A2E key.');
     elements.settingsDialog.showModal();
     return;
   }
@@ -711,26 +812,9 @@ async function runSingleVideo(scene) {
   scene.videoUrl = null;
   renderScenes();
   try {
-    let url = null;
-    let provider = 'openai';
-    if (useOpenAI) {
-      try {
-        log(`Scene ${scene.n}: submitting Sora 2 clip (OpenAI).`);
-        url = await generateOpenAIVideo(scene);
-      } catch (openaiErr) {
-        if (useA2E) {
-          log(`Scene ${scene.n}: Sora 2 failed (${openaiErr.message}); falling back to A2E.`, 'warn');
-          url = await generateA2EVideo(scene);
-          provider = 'a2e';
-        } else {
-          throw openaiErr;
-        }
-      }
-    } else {
-      log(`Scene ${scene.n}: submitting A2E clip.`);
-      url = await generateA2EVideo(scene);
-      provider = 'a2e';
-    }
+    const { url, provider } = await generateVideoClip(scene, {
+      onAttempt: (p) => log(`Scene ${scene.n}: submitting clip via ${providerLabel(p)}.`),
+    });
     scene.videoUrl = url;
     scene.videoProvider = provider;
     scene.videoStatus = 'done';
@@ -763,14 +847,14 @@ async function runSingleVideo(scene) {
   }
 }
 
-// Create videos for every scene that has an image. Tries OpenAI first,
-// falls back to A2E per scene.
+// Create videos for every scene that has an image. Tries OpenAI Sora 2
+// first, then Hedra, then A2E per scene — whichever keys are configured.
 async function runAllVideos() {
   if (state.running) return;
   const scenes = state.scenes;
   if (!scenes.length) return setBanner('bad', 'Parse at least one scene first.');
-  if (!hasProviderKey('openai') && !hasProviderKey('a2e')) {
-    setBanner('bad', 'Open Settings and add an OpenAI or A2E key.');
+  if (!availableVideoProviders().length) {
+    setBanner('bad', 'Open Settings and add an OpenAI, Hedra, or A2E key.');
     elements.settingsDialog.showModal();
     return;
   }
@@ -785,26 +869,9 @@ async function runAllVideos() {
     scene.videoUrl = null;
     renderScenes();
     try {
-      let url = null;
-      let provider = 'openai';
-      if (hasProviderKey('openai')) {
-        try {
-          log(`Scene ${scene.n}: submitting Sora 2 clip.`);
-          url = await generateOpenAIVideo(scene);
-        } catch (openaiErr) {
-          if (hasProviderKey('a2e')) {
-            log(`Scene ${scene.n}: Sora 2 failed (${openaiErr.message}); falling back to A2E.`, 'warn');
-            url = await generateA2EVideo(scene);
-            provider = 'a2e';
-          } else {
-            throw openaiErr;
-          }
-        }
-      } else {
-        log(`Scene ${scene.n}: submitting A2E clip.`);
-        url = await generateA2EVideo(scene);
-        provider = 'a2e';
-      }
+      const { url, provider } = await generateVideoClip(scene, {
+        onAttempt: (p) => log(`Scene ${scene.n}: submitting clip via ${providerLabel(p)}.`),
+      });
       scene.videoUrl = url;
       scene.videoProvider = provider;
       scene.videoStatus = 'done';
@@ -939,9 +1006,9 @@ async function runPipeline(scenes = state.scenes, includeVideos = true) {
         // Skip the entire video phase if no video provider key is
         // configured. The user can add a key and re-run, or use
         // the per-scene Recreate clip button later.
-        if (!hasProviderKey('openai') && !hasProviderKey('a2e')) {
+        if (!availableVideoProviders().length) {
           scene.videoStatus = 'failed';
-          scene.videoError = 'No video provider key configured — add OpenAI or A2E in Settings to enable clips.';
+          scene.videoError = 'No video provider key configured — add OpenAI, Hedra, or A2E in Settings to enable clips.';
           log(`Scene ${scene.n}: no video provider key, skipping clip.`, 'warn');
           completed += 1;
           setProgress(completed, operations, `Scene ${scene.n} video skipped.`);
@@ -951,57 +1018,14 @@ async function runPipeline(scenes = state.scenes, includeVideos = true) {
         scene.videoStatus = 'running';
         scene.videoError = null;
         renderScenes();
-        // Hybrid video path: OpenAI Sora 2 first, A2E on any error.
+        // Hybrid video path: OpenAI Sora 2 first, then Hedra, then A2E.
         // Same logic as the per-scene Create video button so the
         // one-click Generate and the per-scene button give the same
         // result. setVideoError happens in the catch below.
         try {
-          let url = null;
-          let vidProvider = 'openai';
-          if (hasProviderKey('openai')) {
-            try {
-              log(`Scene ${scene.n}: submitting Sora 2 clip.`);
-              url = await generateOpenAIVideo(scene);
-            } catch (openaiErr) {
-              // Three distinct fall-through paths after a Sora 2
-              // failure:
-              //  1. A2E key set → try A2E
-              //  2. Sora 2 is gated (org not verified / model not
-              //     enabled / billing) and no A2E key → mark the
-              //     VIDEO as "skipped" (not "failed") and continue
-              //     with the image phase. The banner turns warn,
-              //     not bad.
-              //  3. Any other Sora 2 error → surface it as "failed".
-              if (hasProviderKey('a2e')) {
-                log(`Scene ${scene.n}: Sora 2 failed (${openaiErr.message}); falling back to A2E.`, 'warn');
-                url = await generateA2EVideo(scene);
-                vidProvider = 'a2e';
-              } else if (openaiErr.kind === 'sora_org_not_verified'
-                  || openaiErr.kind === 'sora_model_not_enabled'
-                  || openaiErr.kind === 'billing_issue') {
-                // Soft-skip: the image succeeded, the video is
-                // gated. Don't fail the run; the user can fix
-                // access at platform.openai.com and re-run clips.
-                log(`Scene ${scene.n}: Sora 2 is gated for this project. Skipping clip.`, 'warn');
-                scene.videoStatus = 'skipped';
-                scene.videoError = openaiErr.message;
-                scene.videoSkipKind = openaiErr.kind;
-                // Throw a sentinel to jump out of the inner try
-                // without re-running the "scene.videoStatus = 'done'"
-                // block below.
-                throw { __skip: true, message: openaiErr.message, kind: openaiErr.kind };
-              } else {
-                throw openaiErr;
-              }
-            }
-          } else if (hasProviderKey('a2e')) {
-            log(`Scene ${scene.n}: submitting A2E clip.`);
-            url = await generateA2EVideo(scene);
-            vidProvider = 'a2e';
-          }
-          // If neither provider has a key, just skip the video
-          // (the user can still get the images and add a key
-          // later for the next run). Don't fail the whole run.
+          const { url, provider: vidProvider } = await generateVideoClip(scene, {
+            onAttempt: (p) => log(`Scene ${scene.n}: submitting clip via ${providerLabel(p)}.`),
+          });
           // Convert the (possibly cross-origin) video URL into a
           // same-origin blob URL so per-scene Download works.
           // Browsers do NOT honor `<a download=...>` on cross-origin
@@ -1030,10 +1054,16 @@ async function runPipeline(scenes = state.scenes, includeVideos = true) {
           scene.videoStatus = 'done';
           scene.videoError = null;
         } catch (vidErr) {
-          // The Sora-2-gated path throws a sentinel object with
-          // __skip: true; honor it without re-stamping the status.
+          // generateVideoClip stamps __skip on a gated Sora 2 failure
+          // with no other provider configured — the image succeeded,
+          // the video is actionable-but-not-broken. Don't fail the run;
+          // the user can fix access at platform.openai.com, add a
+          // Hedra/A2E key, and re-run clips.
           if (vidErr && vidErr.__skip) {
             log(`Scene ${scene.n}: ${vidErr.message}`, 'warn');
+            scene.videoStatus = 'skipped';
+            scene.videoError = vidErr.message;
+            scene.videoSkipKind = vidErr.kind;
             if (!state.videoSkips) state.videoSkips = [];
             state.videoSkips.push({ n: scene.n, kind: vidErr.kind, message: vidErr.message });
           } else {
@@ -1684,7 +1714,7 @@ function wireEvents() {
   elements.settingsButton.addEventListener('click', () => elements.settingsDialog.showModal());
   elements.saveSettingsButton.addEventListener('click', saveCredentials);
   elements.wipeButton.addEventListener('click', () => {
-    if (!confirm('Delete the saved project AND all saved API keys (OpenAI, A2E, app token) from this browser?')) return;
+    if (!confirm('Delete the saved project AND all saved API keys (OpenAI, A2E, Hedra, app token) from this browser?')) return;
     localStorage.removeItem(PROJECT_KEY);
     localStorage.removeItem(SESSION_KEY);
     location.reload();
@@ -1707,6 +1737,7 @@ function init() {
   const credentials = readCredentials();
   elements.openaiKeyInput.value = credentials.openaiKey || '';
   elements.a2eKeyInput.value = credentials.a2eKey || '';
+  elements.hedraKeyInput.value = credentials.hedraKey || '';
   wireEvents();
   // One-time migration: if a v1 project blob had a reference field
   // inlined as a data URL, copy it to IndexedDB and clear the legacy

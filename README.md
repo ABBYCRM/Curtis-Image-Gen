@@ -7,8 +7,8 @@ The app is a single self-contained HTML page (no build step, no framework, no th
 ## What it does
 
 - Parse a script (timed headers `[0:00 - 0:04] Scene N: Title` or `---` separators).
-- One click does **images + videos** for every scene. OpenAI GPT Image 2 for stills (with A2E fallback), OpenAI Sora 2 for clips (with A2E fallback).
-- Persist every successful image and clip to the **Album** tab so you can re-download them across browser sessions and tabs.
+- One click does **images + videos** for every scene. OpenAI GPT Image 2 for stills (with A2E fallback), OpenAI Sora 2 for clips (with Hedra, then A2E, as fallback).
+- Persist every successful image and clip to the **Album** tab so you can re-download them across browser sessions and tabs — every clip, whichever provider produced it, ends up as a downloadable MP4 on the scene card and in the Album.
 
 ## Supported production paths
 
@@ -16,13 +16,14 @@ The app is a single self-contained HTML page (no build step, no framework, no th
 |----------|-------|-------|-------|
 | **OpenAI GPT Image 2** (`gpt-image-2`) | yes (multipart `/v1/images/edits` with `input_reference`, or `/v1/images/generations`) | — | face-locked when a reference is supplied |
 | **OpenAI Sora 2** (`sora-2`) | — | yes (4 / 8 / 12 second clips) | **scheduled for removal 2026-09-24** — fallback path below is the long-term story |
-| **A2E** `userNanoBanana` / `userImage2Video` | yes | yes | long-term video path; used automatically when Sora fails or is missing |
+| **Hedra** (`fal/grok-video-i2v`) | — | yes (image + text prompt, no audio asset required) | tried after Sora 2; needs a [Hedra API key](https://www.hedra.com/api-profile) (Creator plan or above) |
+| **A2E** `userNanoBanana` / `userImage2Video` | yes | yes | final video fallback; used automatically when Sora 2 and Hedra both fail or are missing |
 
-The Create Video button tries **OpenAI Sora 2 first**, then falls back to A2E on any error (auth, content moderation, size mismatch, etc.). The fallback is logged so the user can see which path produced each clip.
+The Create Video button tries **OpenAI Sora 2 first**, then **Hedra**, then **A2E** — whichever provider keys are configured, in that order — falling through on any error (auth, content moderation, size mismatch, gating, etc.). Each attempt is logged so the user can see which path produced each clip.
 
 ## Security model
 
-- **Provider keys are stored in `localStorage`** (not `sessionStorage`) so they survive page reloads and new tabs. The Wipe button under Settings clears both project data and credentials.
+- **Provider keys are stored in `localStorage`** (not `sessionStorage`) so they survive page reloads and new tabs — OpenAI, A2E, and Hedra keys alike. The Wipe button under Settings clears both project data and credentials.
 - Project structure (script, scenes, prompt text) lives in `localStorage`. The **resized reference image is stored in IndexedDB** (`public/idb.js`) so the project blob never approaches the per-origin `localStorage` quota. A migration (`migrateLegacyReference`) copies any v1 inlined data URL into IndexedDB on first load.
 - The app has a strict Content Security Policy in a `<meta http-equiv="Content-Security-Policy">` tag. No third-party scripts, no third-party fonts, no external analytics.
 - The proxy never exposes env-stored provider keys to anonymous callers. If `APP_PROXY_TOKEN` is set on the proxy, callers must send the matching `x-app-token` header to use those keys.

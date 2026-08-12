@@ -16,7 +16,7 @@
   <header class="topbar">
     <div>
       <h1>Curtis Image Studio</h1>
-      <p>Reference-locked scene images and video clips (OpenAI Sora 2 with A2E fallback).</p>
+      <p>Reference-locked scene images and video clips (OpenAI Sora 2, Hedra, and A2E fallback).</p>
     </div>
     <div id="connectionPill" class="pill checking" role="status">Checking proxy…</div>
   </header>
@@ -109,7 +109,7 @@
           <textarea id="styleInput" rows="4">cinematic film still, photorealistic, coherent wardrobe and lighting, preserve the exact identity and facial features from the reference image</textarea>
           <div class="button-row primary-actions">
             <button id="generateButton" class="button primary" type="button">Generate images + videos</button>
-            <button id="createAllVideosButton" class="button" type="button" title="OpenAI Sora 2 first, A2E fallback. Use this to retry clips for scenes that already have images.">Retry all clips</button>
+            <button id="createAllVideosButton" class="button" type="button" title="OpenAI Sora 2 first, then Hedra, then A2E. Use this to retry clips for scenes that already have images.">Retry all clips</button>
             <button id="stopButton" class="button danger" type="button" disabled>Stop</button>
           </div>
           <progress id="runProgress" max="100" value="0"></progress>
@@ -175,11 +175,15 @@
         A2E API key
         <input id="a2eKeyInput" type="password" autocomplete="off" placeholder="A2E key">
       </label>
+      <label>
+        Hedra API key
+        <input id="hedraKeyInput" type="password" autocomplete="off" placeholder="Hedra key">
+      </label>
       <div class="button-row">
         <button id="saveSettingsButton" class="button primary" value="default" type="button">Save keys</button>
         <button id="wipeButton" class="button danger" type="button">Wipe all browser data</button>
       </div>
-      <p class="muted">OpenAI image generation uses GPT Image 2. OpenAI video uses Sora 2 (deprecated 2026-09-24, still live); A2E userImage2Video is the long-term clip fallback. The Create Video button will use OpenAI when the key is set and fall back to A2E automatically.</p>
+      <p class="muted">OpenAI image generation uses GPT Image 2. Video clips try OpenAI Sora 2 first (deprecated 2026-09-24, still live), then Hedra (<code>fal/grok-video-i2v</code>, image + prompt), then A2E userImage2Video — whichever keys are configured, in that order. Get a Hedra key at <a href="https://www.hedra.com/api-profile" target="_blank" rel="noopener">hedra.com/api-profile</a> (Creator plan or above).</p>
     </form>
   </dialog>
 </body>

@@ -67,7 +67,7 @@ const requiredIds = [
   // Album panel
   'albumGrid', 'albumSummary', 'refreshAlbumButton', 'clearAlbumButton',
   // Settings dialog
-  'settingsButton', 'settingsDialog', 'openaiKeyInput', 'a2eKeyInput',
+  'settingsButton', 'settingsDialog', 'openaiKeyInput', 'a2eKeyInput', 'hedraKeyInput',
   'saveSettingsButton', 'wipeButton',
 ];
 const missingIds = requiredIds.filter((id) => !ids.includes(id));
@@ -96,7 +96,7 @@ for (const forbidden of [
 // --- app.js: required runtime contracts. ---
 for (const required of [
   // Provider paths
-  '/openai/images', '/openai/videos', '/a2e',
+  '/openai/images', '/openai/videos', '/a2e', '/hedra/video',
   // Models
   'sora-2',
   // Storage + abort
@@ -106,7 +106,7 @@ for (const required of [
   // Image processing
   'createImageBitmap', 'toDataURL',
   // LIMITS / size maps
-  'LIMITS', 'OPENAI_SIZES', 'A2E_RESOLUTIONS',
+  'LIMITS', 'OPENAI_SIZES', 'A2E_RESOLUTIONS', 'HEDRA_RESOLUTIONS',
   // IndexedDB
   'CurtisIndexedDb',
 ]) {
