@@ -208,7 +208,7 @@ function projectSnapshot() {
     quality: elements.qualitySelect.value,
     style: elements.styleInput.value,
     storyboard: state.storyboard,
-    scenes: state.scenes.map(({ id, title, description, visual, voiceover }) => ({ id, title, description, visual, voiceover })),
+    scenes: state.scenes.map(({ id, title, description, visual, voiceover, accepted }) => ({ id, title, description, visual, voiceover, accepted: !!accepted })),
   };
 }
 
@@ -243,6 +243,13 @@ function loadProject() {
           description: String(scene.description || '').slice(0, LIMITS.MAX_DESCRIPTION_CHARS),
           visual: String(scene.visual || '').slice(0, LIMITS.MAX_FIELD_CHARS),
           voiceover: String(scene.voiceover || '').slice(0, LIMITS.MAX_FIELD_CHARS),
+          // accepted: when true, the operator has reviewed this
+          // scene's still/clip and signed off. Acceptance is a
+          // signal that the scene is good enough to render Sora 2
+          // against; the operator can also use it to track which
+          // scenes they still need to review. Persisted in
+          // projectSnapshot below.
+          accepted: Boolean(scene.accepted),
           imageStatus: 'idle', videoStatus: 'idle', imageUrl: null, videoUrl: null,
         }))
       : [];
@@ -378,6 +385,23 @@ function makeSceneCard(scene) {
   }, 'danger'));
 
   body.append(description, actions);
+  // Acceptance checkbox: the operator's review signal. When
+  // checked, the scene card shows a green "Accepted" badge that
+  // the operator can see at a glance across all scenes. Persisted
+  // in projectSnapshot so it survives a refresh.
+  const acceptLabel = document.createElement('label');
+  acceptLabel.className = 'scene-accept';
+  const acceptCheckbox = document.createElement('input');
+  acceptCheckbox.type = 'checkbox';
+  acceptCheckbox.checked = Boolean(scene.accepted);
+  acceptCheckbox.addEventListener('change', () => {
+    scene.accepted = acceptCheckbox.checked;
+    saveProject();
+  });
+  const acceptText = document.createElement('span');
+  acceptText.textContent = scene.accepted ? 'Accepted — looks right' : 'Mark as accepted';
+  acceptLabel.append(acceptCheckbox, acceptText);
+  body.append(acceptLabel);
   card.append(media, body);
   return card;
 }
@@ -450,6 +474,7 @@ function parseScript(text) {
     return {
       id: createId(), n: index + 1, title: titleLine.slice(0, LIMITS.MAX_TITLE_CHARS), description,
       visual: fields.visual, voiceover: fields.voiceover,
+      accepted: false,
       imageStatus: 'idle', videoStatus: 'idle', imageUrl: null, videoUrl: null,
     };
   });
@@ -1684,7 +1709,7 @@ function wireEvents() {
   elements.addSceneButton.addEventListener('click', () => {
     state.scenes.push({
       id: createId(), n: state.scenes.length + 1, title: `Scene ${state.scenes.length + 1}`,
-      description: '', visual: '', voiceover: '', imageStatus: 'idle', videoStatus: 'idle', imageUrl: null, videoUrl: null,
+      description: '', visual: '', voiceover: '', accepted: false, imageStatus: 'idle', videoStatus: 'idle', imageUrl: null, videoUrl: null,
     });
     renderScenes();
     saveProject();

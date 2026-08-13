@@ -559,6 +559,29 @@
     font-size: .95rem;
     margin-block-end: var(--space-2);
   }
+  /* Per-scene acceptance checkbox. The operator reviews each
+   * scene and ticks the box when the still/clip looks right. The
+   * label changes wording when checked. */
+  .scene-accept {
+    display: flex;
+    align-items: center;
+    gap: var(--space-6);
+    padding: var(--space-6) var(--space-8);
+    margin-block-start: var(--space-6);
+    border-block-start: 1px solid var(--line);
+    font-size: .82rem;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .scene-accept input[type="checkbox"] {
+    inline-size: 1rem;
+    block-size: 1rem;
+    margin: 0;
+    accent-color: var(--gold);
+  }
+  .scene-accept:has(input:checked) {
+    color: var(--gold);
+  }
   .button-row {
     display: flex;
     flex-wrap: wrap;
