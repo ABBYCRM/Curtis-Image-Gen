@@ -59,8 +59,8 @@ const requiredIds = [
   'banner', 'referenceDrop', 'referenceFile', 'referenceUrl', 'referencePreview',
   'referenceEmpty', 'clearReferenceButton', 'scriptInput', 'parseButton',
   'addSceneButton', 'providerSelect', 'aspectSelect', 'qualitySelect',
-  'styleInput', 'generateButton', 'createAllVideosButton', 'stopButton',
-  'runProgress', 'progressText',
+  'styleInput', 'storyboardCheck', 'generateButton', 'createAllVideosButton',
+  'stopButton', 'runProgress', 'progressText',
   // Scenes panel
   'sceneList', 'log', 'downloadAllImagesButton', 'downloadAllVideosButton',
   'exportButton', 'importFile', 'workspaceTitle',

@@ -68,7 +68,21 @@
           <h3>Script</h3>
           <p class="muted">Use <code>---</code> between scenes, or headers such as <code>[0:00 - 0:04] Scene 1: Arrival</code>.</p>
           <label for="scriptInput">Scene script</label>
-          <textarea id="scriptInput" rows="12" placeholder="Scene 1: The Arrival&#10;Visual: Curtis enters a warm, cinematic study.&#10;Voiceover: Every comeback starts with one decision.&#10;---&#10;Scene 2: The Resolve&#10;Visual: Close-up as he wraps his hands and looks toward camera."></textarea>
+          <textarea id="scriptInput" rows="14" placeholder="Scene 1: The Arrival
+Visual: Curtis enters a warm, cinematic study, photographed at golden hour. Camera at chest height, slight dolly forward. He stops at the desk, looking out the window.
+Voiceover: Every comeback starts with one decision.
+
+---
+
+Scene 2: The Resolve
+Visual: Close-up. He wraps his hands. Eyes locked on the camera. Locked frame, no camera movement. Warm key light from the right.
+Voiceover: I came back for one reason.
+
+---
+
+Scene 3: The Call
+Visual: Wide shot from across the room. He steps into the doorway, backlit. Motion: one step forward, no other movement.
+Voiceover: Tomorrow we begin."></textarea>
           <div class="button-row">
             <button id="parseButton" class="button" type="button">Parse scenes</button>
             <button id="addSceneButton" class="button ghost" type="button">Add blank scene</button>
@@ -107,6 +121,17 @@
           </div>
           <label for="styleInput">Shared style</label>
           <textarea id="styleInput" rows="4">cinematic film still, photorealistic, coherent wardrobe and lighting, preserve the exact identity and facial features from the reference image</textarea>
+          <div class="form-row">
+            <label class="checkbox-row">
+              <input id="storyboardCheck" type="checkbox" checked>
+              <span>
+                <strong>Storyboard mode</strong> — generate cheap 1K stills only.
+                Uncheck when every scene looks right to promote the stills
+                to Sora 2 video clips. Use this to iterate on script and
+                style without burning Sora 2 minutes.
+              </span>
+            </label>
+          </div>
           <div class="button-row primary-actions">
             <button id="generateButton" class="button primary" type="button">Generate images + videos</button>
             <button id="createAllVideosButton" class="button" type="button" title="OpenAI Sora 2 first, A2E fallback. Use this to retry clips for scenes that already have images.">Retry all clips</button>

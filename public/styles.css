@@ -529,6 +529,36 @@
   }
 
   /* ---- buttons (one rule) ---- */
+  .checkbox-row {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-8);
+    padding: var(--space-8) var(--space-10);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: var(--surface-1);
+    cursor: pointer;
+  }
+  .checkbox-row input[type="checkbox"] {
+    flex: 0 0 auto;
+    inline-size: 1.1rem;
+    block-size: 1.1rem;
+    margin: 0;
+    accent-color: var(--gold);
+    padding: 0;
+    border: 0;
+  }
+  .checkbox-row span {
+    color: var(--muted);
+    font-size: .84rem;
+    line-height: 1.45;
+  }
+  .checkbox-row strong {
+    display: block;
+    color: var(--text);
+    font-size: .95rem;
+    margin-block-end: var(--space-2);
+  }
   .button-row {
     display: flex;
     flex-wrap: wrap;

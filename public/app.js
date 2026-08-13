@@ -63,7 +63,7 @@ const elements = Object.fromEntries([
   'connectionPill', 'banner', 'referenceDrop', 'referenceFile', 'referenceUrl',
   'referencePreview', 'referenceEmpty', 'clearReferenceButton', 'scriptInput',
   'parseButton', 'addSceneButton', 'providerSelect', 'aspectSelect', 'qualitySelect',
-  'styleInput', 'generateButton', 'createAllVideosButton', 'stopButton',
+  'styleInput', 'storyboardCheck', 'generateButton', 'createAllVideosButton', 'stopButton',
   'runProgress', 'progressText', 'sceneList', 'log', 'settingsButton',
   'settingsDialog', 'openaiKeyInput', 'a2eKeyInput',
   'saveSettingsButton', 'wipeButton', 'downloadAllImagesButton',
@@ -77,6 +77,13 @@ const state = {
   reference: null,
   running: false,
   abortController: null,
+  // storyboard: when true, runPipeline stops after the stills (no
+  // Sora 2). Use this for fast iteration on the script and style
+  // — once every scene looks right, flip it off and run Generate
+  // again to promote the stills to clips. Default true so a brand
+  // new user doesn't burn $5 in Sora 2 minutes on a script
+  // they're still editing.
+  storyboard: true,
 };
 
 function createId() {
@@ -147,17 +154,22 @@ function setProgress(current, total, message) {
 }
 
 function updateGenerateLabel() {
-  // The Generate button now always does BOTH images and videos in
-  // one click. The user used to have to click Generate, wait, then
-  // click Create video on every scene — they rightly called that
-  // "not happening." One click, all the assets, end of story.
+  // The button label reflects what's actually about to happen, so
+  // the user always knows whether Sora 2 minutes are about to be
+  // spent. Storyboard mode (default ON) skips video entirely —
+  // uncheck it when ready to promote stills to clips.
   const hasVideoKey = hasProviderKey('openai') || hasProviderKey('a2e');
-  elements.generateButton.textContent = hasVideoKey
-    ? 'Generate images + videos'
-    : 'Generate images';
-  elements.generateButton.title = hasVideoKey
-    ? 'Generates the scene image and the video clip for every scene in one click. OpenAI Sora 2 first for video, A2E fallback.'
-    : 'Add a video provider key in Settings to also generate clips.';
+  if (state.storyboard) {
+    elements.generateButton.textContent = 'Storyboard scenes';
+    elements.generateButton.title = 'Generates 1K stills only — no Sora 2 minutes will be spent. Uncheck the Storyboard mode box below when every scene looks right, then click Generate again to promote stills to video clips.';
+  } else {
+    elements.generateButton.textContent = hasVideoKey
+      ? 'Generate images + videos'
+      : 'Generate images';
+    elements.generateButton.title = hasVideoKey
+      ? 'Generates the scene image and the video clip for every scene in one click. OpenAI Sora 2 first for video, A2E fallback.'
+      : 'Add a video provider key in Settings to also generate clips.';
+  }
   updateCreateAllVideosButton();
 }
 
@@ -195,6 +207,7 @@ function projectSnapshot() {
     aspect: elements.aspectSelect.value,
     quality: elements.qualitySelect.value,
     style: elements.styleInput.value,
+    storyboard: state.storyboard,
     scenes: state.scenes.map(({ id, title, description, visual, voiceover }) => ({ id, title, description, visual, voiceover })),
   };
 }
@@ -220,6 +233,8 @@ function loadProject() {
     elements.aspectSelect.value = ['16:9', '9:16', '1:1'].includes(project.aspect) ? project.aspect : '16:9';
     elements.qualitySelect.value = ['low', 'medium', 'high'].includes(project.quality) ? project.quality : 'medium';
     elements.styleInput.value = typeof project.style === 'string' ? project.style : elements.styleInput.value;
+    state.storyboard = project.storyboard !== false;  // default true for new users
+    if (elements.storyboardCheck) elements.storyboardCheck.checked = state.storyboard;
     state.scenes = Array.isArray(project.scenes)
       ? project.scenes.slice(0, LIMITS.MAX_SCENES).map((scene, index) => ({
           id: typeof scene.id === 'string' ? scene.id : createId(),
@@ -857,6 +872,9 @@ async function runPipeline(scenes = state.scenes, includeVideos = true) {
     elements.settingsDialog.showModal();
     return;
   }
+  // Storyboard mode (default ON) overrides includeVideos — the
+  // user wants to iterate on stills only, no Sora 2 spend.
+  if (state.storyboard) includeVideos = false;
 
   state.running = true;
   state.abortController = new AbortController();
@@ -867,7 +885,9 @@ async function runPipeline(scenes = state.scenes, includeVideos = true) {
   let completed = 0;
 
   try {
-    setBanner('info', `Generating with ${provider === 'openai' ? 'GPT Image 2' : 'A2E'}…`);
+    setBanner('info', state.storyboard
+      ? `Storyboarding ${scenes.length} scene${scenes.length === 1 ? '' : 's'} — 1K stills only. No Sora 2 minutes will be spent.`
+      : `Generating with ${provider === 'openai' ? 'GPT Image 2' : 'A2E'}…`);
     for (const scene of scenes) {
       scene.imageStatus = 'running';
       scene.imageError = null;
@@ -1069,7 +1089,9 @@ async function runPipeline(scenes = state.scenes, includeVideos = true) {
     const videoOk = (state.scenes || []).filter((s) => s.videoStatus === 'done').length;
     state.videoSkips = [];
     state.videoFailures = [];
-    if (skipCount > 0 && includeVideos) {
+    if (state.storyboard) {
+      setBanner('ok', 'Storyboard done. Review each scene, then uncheck "Storyboard mode" and Generate again to promote the stills to Sora 2 clips.');
+    } else if (skipCount > 0 && includeVideos) {
       const firstSkip = state.videoSkips && state.videoSkips[0];
       const msg = `All scene images are ready. ${skipCount} clip${skipCount === 1 ? '' : 's'} skipped — ${firstSkip?.message || 'Sora 2 is gated for this project.'} Add an A2E key in Settings to render clips via A2E.`;
       setBanner('warn', msg);
@@ -1668,6 +1690,11 @@ function wireEvents() {
     saveProject();
   });
   elements.providerSelect.addEventListener('change', () => { updateGenerateLabel(); saveProject(); });
+  elements.storyboardCheck.addEventListener('change', () => {
+    state.storyboard = elements.storyboardCheck.checked;
+    updateGenerateLabel();
+    saveProject();
+  });
   elements.aspectSelect.addEventListener('change', saveProject);
   elements.qualitySelect.addEventListener('change', saveProject);
   elements.styleInput.addEventListener('change', saveProject);
@@ -1713,6 +1740,9 @@ function init() {
   // field. v2 snapshots use reference_present instead.
   migrateLegacyReference().catch(() => {});
   loadProject();
+  // Make sure the storyboard checkbox matches the loaded state
+  // even on first run (when loadProject is a no-op).
+  if (elements.storyboardCheck) elements.storyboardCheck.checked = state.storyboard;
   switchTab('setup');
   refreshAlbum();
   renderReference();
