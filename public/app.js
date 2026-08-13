@@ -394,12 +394,18 @@ function makeSceneCard(scene) {
   const acceptCheckbox = document.createElement('input');
   acceptCheckbox.type = 'checkbox';
   acceptCheckbox.checked = Boolean(scene.accepted);
+  const acceptText = document.createElement('span');
+  const refreshAcceptText = () => {
+    acceptText.textContent = acceptCheckbox.checked
+      ? 'Accepted — looks right'
+      : 'Mark as accepted';
+  };
+  refreshAcceptText();
   acceptCheckbox.addEventListener('change', () => {
     scene.accepted = acceptCheckbox.checked;
+    refreshAcceptText();
     saveProject();
   });
-  const acceptText = document.createElement('span');
-  acceptText.textContent = scene.accepted ? 'Accepted — looks right' : 'Mark as accepted';
   acceptLabel.append(acceptCheckbox, acceptText);
   body.append(acceptLabel);
   card.append(media, body);
